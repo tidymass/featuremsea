@@ -1,11 +1,18 @@
-Package: featureMSEA
-Title: What the Package Does (One Line, Title Case)
+Type: Package
+Package: featuremsea
+Title: Feature-based Metabolite Set Enrichment Analysis 
 Version: 0.0.0.9000
-Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"))
-Description: What the package does (one paragraph).
-License: `use_mit_license()`, `use_gpl3_license()` or friends to pick a
-    license
-Encoding: UTF-8
-Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3
+Date: 2025-12-02
+Authors@R: c(
+    person("Xiaotao", "Shen", , "shenxt1990@outlook.com", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-9608-9964")),
+    person("Yijiang", "Liu", , "liuy0292@e.ntu.edu.sg", role = c("aut"))
+  )
+Description: R Package for Feature-based Metabolite Set Enrichment Analysis (fmsea)
+License: MIT + file LICENSE
+URL: https://github.com/jaspershen/featuremsea
+BugReports: https://github.com/tidymass/featuremsea/issues
+Depends: 
+    
+Imports:
+    
