@@ -1,0 +1,22 @@
+utils::globalVariables(
+  c(
+    "KEGG.ID",
+    "polarity",
+    ".data",
+    "variable_id",
+    "Formula",
+    "peakIndex",
+    ".",
+    "Compound.name",
+    "isotope",
+    "rt",
+    "Lab.ID",
+    "mzError.ppm",
+    "rtError.s",
+    "metabolite_feature_cluster",
+    ".N",
+    "N",
+    "score",
+    "extenstion" # 注意：这里我也加上了，但建议看第四步
+  )
+)

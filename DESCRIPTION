@@ -1,18 +1,39 @@
-Type: Package
 Package: featuremsea
-Title: Feature-based Metabolite Set Enrichment Analysis 
+Title: Feature-Based Metabolite Set Enrichment Analysis
 Version: 0.0.0.9000
-Date: 2025-12-02
-Authors@R: c(
-    person("Xiaotao", "Shen", , "shenxt1990@outlook.com", role = c("aut", "cre"),
-           comment = c(ORCID = "0000-0002-9608-9964")),
-    person("Yijiang", "Liu", , "liuy0292@e.ntu.edu.sg", role = c("aut"))
-  )
-Description: R Package for Feature-based Metabolite Set Enrichment Analysis (fmsea)
+Authors@R: 
+    c(person(given = "Xiaotao",
+             family = "Shen",
+             role = c("aut", "cre"),
+             email = "shenxt1990@outlook.com",
+             comment = c(ORCID = "0000-0002-9608-9964")),
+      person(given = "Yijiang",
+             family = "Liu",
+             role = c("aut"),
+             email = "liuy0292@e.ntu.edu.sg"))
+Description: Provides tools for performing Feature-based Metabolite Set Enrichment 
+    Analysis (fMSEA). This package integrates isotopic peak annotation and 
+    metabolite set prediction directly from mass spectrometry feature data, 
+    supporting complex adduct and isotope matching logic.
 License: MIT + file LICENSE
 URL: https://github.com/jaspershen/featuremsea
 BugReports: https://github.com/tidymass/featuremsea/issues
-Depends: 
-    
-Imports:
-    
+Depends: R (>= 4.1)
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 7.3.3
+Imports: 
+    data.table,
+    dplyr,
+    furrr,
+    future,
+    massdataset,
+    masstools,
+    metid,
+    purrr,
+    Rdisop,
+    stringr
+Remotes: 
+    gitlab::tidymass/masstools,
+    gitlab::tidymass/metid,
+    gitlab::tidymass/massdataset
