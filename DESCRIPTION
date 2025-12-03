@@ -27,11 +27,14 @@ Imports:
     dplyr,
     furrr,
     future,
+    magrittr,
     massdataset,
     masstools,
+    Matrix,
     metid,
     purrr,
     Rdisop,
+    rlang,
     stringr
 Remotes: 
     gitlab::tidymass/masstools,

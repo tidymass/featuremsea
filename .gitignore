@@ -2,3 +2,9 @@
 .Rhistory
 .RData
 .Ruserdata
+.DS_Store
+
+demo_data
+demo_data/
+
+
