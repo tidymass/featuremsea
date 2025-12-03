@@ -1,6 +1,4 @@
-# featuremsea
-
-# fMSEA <img src="man/figures/logo.png" align="right" alt="" width="120" />
+# featuremsea <img src="man/figures/logo.png" align="right" alt="" width="120" />
 
 featuremsea is the R package for [fmsea](https://github.com/tidymass/fmsea), and is part of [TidyMass Project](https://github.com/tidymass).
 
