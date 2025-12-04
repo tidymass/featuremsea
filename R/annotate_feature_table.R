@@ -126,6 +126,17 @@ annotate_feature_table <-
           variable_info = feature_table_pos
         )
       
+      # load the adduct table from metid
+      if (column == "rp" && all(feature_table_pos$polarity == "positive")) {
+        utils::data("rp.pos", package = "metid")
+        adduct.table.pos <- rp.pos
+      } else if (column == "hilic" && all(feature_table_pos$polarity == "positive")) {
+        utils::data("hilic.pos", package = "metid")
+        adduct.table.pos <- hilic.pos
+      } else {
+        stop("No default adduct table defined for this (column, polarity) combination.")
+      }
+      
       object_pos <-
         metid::annotate_metabolites(
           object = object_pos,
@@ -134,7 +145,8 @@ annotate_feature_table <-
           column = column,
           polarity = "positive",
           database = metabolite_database,
-          candidate.num = 1000
+          candidate.num = 1000,
+          adduct.table = adduct.table.pos 
         )
       
       annotation_table_ms1_pos <-
@@ -158,6 +170,15 @@ annotate_feature_table <-
           sample_info = sample_info,
           variable_info = feature_table_neg
         )
+      
+      #load the adduct table from metid
+      if (column == "rp" && all(feature_table_neg$polarity == "negative")) {
+        utils::data("rp.neg", package = "metid")
+        adduct.table.neg <- rp.neg
+      } else if (column == "hilic" && all(feature_table_neg$polarity == "negative")) {
+        utils::data("hilic.neg", package = "metid")
+        adduct.table.neg <- hilic.neg
+      }
       
       object_neg <-
         metid::annotate_metabolites(
