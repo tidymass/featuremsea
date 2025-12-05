@@ -24,15 +24,20 @@ LazyData: true
 RoxygenNote: 7.3.3
 Imports: 
     data.table,
+    doParallel,
     dplyr,
+    foreach,
     furrr,
     future,
     magrittr,
     massdataset,
     masstools,
     Matrix,
+    matrixStats,
     metid,
+    parallel,
     purrr,
+    Rcpp,
     Rdisop,
     rlang,
     stringr
@@ -40,3 +45,5 @@ Remotes:
     gitlab::tidymass/masstools,
     gitlab::tidymass/metid,
     gitlab::tidymass/massdataset
+LinkingTo: 
+    Rcpp
