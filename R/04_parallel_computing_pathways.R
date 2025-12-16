@@ -44,6 +44,8 @@
 #'   \item \code{perm_ES} – (optional) permutation ES values
 #' }
 #'
+#' @importFrom foreach %dopar%
+#' @importFrom dplyr %>%
 #' @export
 #'
 parallel_computing_pathways_indexed_fast <- function(

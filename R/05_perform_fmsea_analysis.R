@@ -78,6 +78,7 @@ perform_fmsea_analysis <- function(
       id_col = id_col,
       n_perm = n_perm,
       seed = seed,
+      return_perm = FALSE,
       n_cores = n_cores,
       verbose = verbose
     )
@@ -89,11 +90,17 @@ perform_fmsea_analysis <- function(
       fdr_threshold = fdr_threshold
     )
     
+    if (nrow(last_significant_mfm) == 0) {
+      if (verbose) message(sprintf("No significant modules found under the current FDR threshold. Stopping iteration."))
+      break
+    }
+    
     # 4) count feature–metabolite pairs
     # Ensure get_fm_long_table is defined in your package
     last_feature_metabolite_count <- get_fm_long_table(
       last_significant_mfm,
-      last_res_list
+      last_res_list,
+      id_col = id_col
     )
     
     # 5) new weighting table

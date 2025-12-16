@@ -40,7 +40,8 @@ Imports:
     Rcpp,
     Rdisop,
     rlang,
-    stringr
+    stringr,
+    tibble
 Remotes: 
     gitlab::tidymass/masstools,
     gitlab::tidymass/metid,
