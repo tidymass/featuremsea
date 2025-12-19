@@ -5,7 +5,7 @@
 \title{Perform Iterative Feature-based Metabolite Set Enrichment Analysis (fMSEA)}
 \usage{
 perform_fmsea_analysis(
-  pathway_dataset,
+  pathway_database,
   annotation_table,
   ranking_table,
   n_cores = NULL,
@@ -20,7 +20,7 @@ perform_fmsea_analysis(
 )
 }
 \arguments{
-\item{pathway_dataset}{A data frame containing pathway information. Must include columns
+\item{pathway_database}{A data frame containing pathway information. Must include columns
 `MFM_id`, `MFM_name`, `MFM_description`, and `pathway_class_all`.}
 
 \item{annotation_table}{A data frame containing the initial annotation weights.}

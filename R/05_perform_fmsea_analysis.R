@@ -4,7 +4,7 @@
 #' weighting of annotations based on the significance of metabolic feature modules (MFMs)
 #' until convergence or a maximum number of iterations is reached.
 #'
-#' @param pathway_dataset A data frame containing pathway information. Must include columns
+#' @param pathway_database A data frame containing pathway information. Must include columns
 #'   `MFM_id`, `MFM_name`, `MFM_description`, and `pathway_class_all`.
 #' @param annotation_table A data frame containing the initial annotation weights.
 #' @param ranking_table A data frame containing the ranking of features (e.g., based on p-values or fold changes).
@@ -34,7 +34,7 @@
 #' @importFrom dplyr left_join select %>%
 #' @export
 perform_fmsea_analysis <- function(
-    pathway_dataset,
+    pathway_database,           
     annotation_table,
     ranking_table,
     n_cores = NULL,
@@ -44,8 +44,8 @@ perform_fmsea_analysis <- function(
     n_perm = 1000,
     seed = 123,
     fdr_threshold = 0.05,
-    max_iter = 10,              # maximum iterations
-    verbose = TRUE              # print progress
+    max_iter = 10,
+    verbose = TRUE
 ) {
   if (verbose) message("Starting FMSEA iterative analysis...")
   
@@ -63,14 +63,12 @@ perform_fmsea_analysis <- function(
     iter_used <- iter
     if (verbose) message(sprintf("Iteration %d: computing enrichment with current score annotation...", iter))
     
-    # 1) normalize score annotation (use the NEW function)
-    # Ensure normalize_score_annotation_new is defined in your package
+    # 1) normalize score annotation
     annotation_table_norm <- normalize_score_annotation_new(score_annotation = score_annotation_table)
     
-    # 2) compute results (use the NEW fast indexed parallel function)
-    # Ensure parallel_computing_pathways_indexed_fast is defined in your package
+    # 2) compute results
     last_res_list <- parallel_computing_pathways_indexed_fast(
-      pathway_dataset = pathway_dataset,
+      pathway_dataset = pathway_database, 
       annotation_table = annotation_table_norm,
       ranking_table = ranking_table,
       min_compounds = min_compounds,
@@ -84,7 +82,6 @@ perform_fmsea_analysis <- function(
     )
     
     # 3) select significant modules
-    # Ensure get_significant_mfm is defined in your package
     last_significant_mfm <- get_significant_mfm(
       last_res_list,
       fdr_threshold = fdr_threshold
@@ -96,7 +93,6 @@ perform_fmsea_analysis <- function(
     }
     
     # 4) count feature–metabolite pairs
-    # Ensure get_fm_long_table is defined in your package
     last_feature_metabolite_count <- get_fm_long_table(
       last_significant_mfm,
       last_res_list,
@@ -104,14 +100,12 @@ perform_fmsea_analysis <- function(
     )
     
     # 5) new weighting table
-    # Ensure get_weighting_annotation_table_fast is defined in your package
     last_annotation_table_weighting <- get_weighting_annotation_table_fast(
       annotation_table,
       last_feature_metabolite_count
     )
     
     # 6) convergence check
-    # Ensure counts_equal is defined in your package
     if (!is.null(prev_feature_metabolite_count) &&
         counts_equal(prev_feature_metabolite_count, last_feature_metabolite_count)) {
       converged <- TRUE
@@ -131,7 +125,7 @@ perform_fmsea_analysis <- function(
   
   significant_modules <- last_significant_mfm %>%
     dplyr::left_join(
-      pathway_dataset[, c("MFM_id", "MFM_name", "MFM_description", "pathway_class_all")],
+      pathway_database[, c("MFM_id", "MFM_name", "MFM_description", "pathway_class_all")], 
       by = c("MFM_id" = "MFM_id")
     ) %>%
     dplyr::select(
