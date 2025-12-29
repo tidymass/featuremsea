@@ -11,13 +11,13 @@ Authors@R:
              family = "Liu",
              role = c("aut"),
              email = "ejoliu@outlook.com",
-             comment = c(ORCID = "0009-0008-6061-0595"))
+             comment = c(ORCID = "0009-0008-6061-0595")))
 Description: Provides tools for performing Feature-based Metabolite Set Enrichment 
     Analysis (fMSEA). This package integrates isotopic peak annotation and 
     metabolite set prediction directly from mass spectrometry feature data, 
     supporting complex adduct and isotope matching logic.
 License: MIT + file LICENSE
-URL: https://github.com/jaspershen/featuremsea
+URL: https://github.com/tidymass/featuremsea
 BugReports: https://github.com/tidymass/featuremsea/issues
 Depends: R (>= 4.1)
 Encoding: UTF-8
