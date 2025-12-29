@@ -10,7 +10,8 @@ Authors@R:
       person(given = "Yijiang",
              family = "Liu",
              role = c("aut"),
-             email = "liuy0292@e.ntu.edu.sg"))
+             email = "ejoliu@outlook.com",
+             comment = c(ORCID = "0009-0008-6061-0595"))
 Description: Provides tools for performing Feature-based Metabolite Set Enrichment 
     Analysis (fMSEA). This package integrates isotopic peak annotation and 
     metabolite set prediction directly from mass spectrometry feature data, 

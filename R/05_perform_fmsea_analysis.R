@@ -18,15 +18,7 @@
 #' @param max.iter.num Integer. Maximum number of iterations for the algorithm. Default is 10.
 #' @param verbose Logical. Whether to print progress messages. Default is `TRUE`.
 #'
-#' @return A list containing:
-#' \describe{
-#'   \item{feature_metabolite_count}{The final count of feature-metabolite pairs.}
-#'   \item{annotation_table_weighting}{The final weighted annotation table.}
-#'   \item{significant_modules}{A data frame of significant MFMs with enrichment statistics (ES, NES, p-value, FDR).}
-#'   \item{res_list}{The raw results list from the last iteration.}
-#'   \item{converged}{Logical. Whether the algorithm converged.}
-#'   \item{iterations_used}{Integer. The number of iterations performed.}
-#' }
+#' @return A \code{featuremsea_object} containing the analysis results.
 #'
 #' @author Xiaotao Shen \email{xiaotao.shen@@outlook.com}
 #' @author Yijiang Liu \email{ejoliu@@outlook.com}
@@ -124,7 +116,7 @@ perform_fmsea_analysis <- function(
     message(sprintf("Reached the maximum iteration limit (%d) without convergence.", max.iter.num))
   }
   
-  significant_modules <- last_significant_mfm %>%
+  significant_modules_final <- last_significant_mfm %>%
     dplyr::left_join(
       pathway_database[, c("MFM_id", "MFM_name", "MFM_description", "pathway_class_all")], 
       by = c("MFM_id" = "MFM_id")
@@ -134,12 +126,17 @@ perform_fmsea_analysis <- function(
       ES, NES, p_value, FDR
     )
   
-  list(
+  # create and return featuremsea_object
+  result_object <- new(
+    Class = "featuremsea_object",
     feature_metabolite_count   = last_feature_metabolite_count,
     annotation_table_weighting = last_annotation_table_weighting,
-    significant_modules        = significant_modules,   
+    significant_modules        = significant_modules_final,   
     res_list                   = last_res_list,
     converged                  = converged,
-    iterations_used            = iter_used
+    iterations_used            = iter_used,
+    process_info               = list(creation_date = as.character(Sys.time()))
   )
+  
+  return(result_object)
 }

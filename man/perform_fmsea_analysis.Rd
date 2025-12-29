@@ -8,14 +8,14 @@ perform_fmsea_analysis(
   pathway_database,
   annotation_table,
   ranking_table,
-  n_cores = NULL,
-  min_compounds = 15,
-  max_compounds = 300,
-  id_col = "KEGG_ID",
-  n_perm = 1000,
+  threads = NULL,
+  min.compounds.num = 15,
+  max.compounds.num = 300,
+  id.col = "KEGG_ID",
+  perm.num = 1000,
   seed = 123,
-  fdr_threshold = 0.05,
-  max_iter = 10,
+  fdr.thr = 0.05,
+  max.iter.num = 10,
   verbose = TRUE
 )
 }
@@ -27,34 +27,26 @@ perform_fmsea_analysis(
 
 \item{ranking_table}{A data frame containing the ranking of features (e.g., based on p-values or fold changes).}
 
-\item{n_cores}{Integer. Number of cores to use for parallel computing. Default is `NULL` (auto-detect or serial).}
+\item{threads}{Integer. Number of threads to use for parallel computing. Default is `NULL` (auto-detect or serial).}
 
-\item{min_compounds}{Integer. Minimum number of compounds required in a pathway. Default is 15.}
+\item{min.compounds.num}{Integer. Minimum number of compounds required in a pathway. Default is 15.}
 
-\item{max_compounds}{Integer. Maximum number of compounds allowed in a pathway. Default is 300.}
+\item{max.compounds.num}{Integer. Maximum number of compounds allowed in a pathway. Default is 300.}
 
-\item{id_col}{Character. The column name for compound IDs (e.g., "KEGG_ID"). Default is "KEGG_ID".}
+\item{id.col}{Character. The column name for compound IDs (e.g., "KEGG_ID"). Default is "KEGG_ID".}
 
-\item{n_perm}{Integer. Number of permutations for significance testing. Default is 1000.}
+\item{perm.num}{Integer. Number of permutations for significance testing. Default is 1000.}
 
 \item{seed}{Integer. Random seed for reproducibility. Default is 123.}
 
-\item{fdr_threshold}{Numeric. FDR threshold for selecting significant modules. Default is 0.05.}
+\item{fdr.thr}{Numeric. FDR threshold for selecting significant modules. Default is 0.05.}
 
-\item{max_iter}{Integer. Maximum number of iterations for the algorithm. Default is 10.}
+\item{max.iter.num}{Integer. Maximum number of iterations for the algorithm. Default is 10.}
 
 \item{verbose}{Logical. Whether to print progress messages. Default is `TRUE`.}
 }
 \value{
-A list containing:
-\describe{
-  \item{feature_metabolite_count}{The final count of feature-metabolite pairs.}
-  \item{annotation_table_weighting}{The final weighted annotation table.}
-  \item{significant_modules}{A data frame of significant MFMs with enrichment statistics (ES, NES, p-value, FDR).}
-  \item{res_list}{The raw results list from the last iteration.}
-  \item{converged}{Logical. Whether the algorithm converged.}
-  \item{iterations_used}{Integer. The number of iterations performed.}
-}
+A \code{featuremsea_object} containing the analysis results.
 }
 \description{
 This function performs an iterative fMSEA analysis. It iteratively updates the
@@ -64,5 +56,5 @@ until convergence or a maximum number of iterations is reached.
 \author{
 Xiaotao Shen \email{xiaotao.shen@outlook.com}
 
-Yijiang Liu \email{liuyj8066@gmail.com}
+Yijiang Liu \email{ejoliu@outlook.com}
 }
