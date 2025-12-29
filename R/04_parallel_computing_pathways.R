@@ -99,13 +99,22 @@ parallel_computing_pathways_indexed_fast <- function(
   rk_idx <- build_ranking_index(base_rk)
   
   # ---- Parallel configuration ----
+  total_cores <- parallel::detectCores()
+  
   if (is.null(n_cores)) {
-    n_cores <- max(1L, min(parallel::detectCores() - 1L, 4L))
+    n_cores <- max(1L, total_cores - 1L)
+  } else {
+    if (n_cores >= total_cores) {
+      if (verbose) {
+        message("Note: Requested n_cores is >= total available. Setting to ", total_cores - 1L)
+      }
+      n_cores <- max(1L, total_cores - 1L)
+    }
   }
   
   if (verbose) {
     cat("Total pathways to analyze:", nrow(pathway_dataset), "\n")
-    cat("Using", n_cores, "CPU cores\n")
+    cat("Utilizing maximum capacity:", n_cores, "CPU cores\n")
     cat("Starting parallel computation...\n")
   }
   

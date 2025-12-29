@@ -8,14 +8,14 @@
 #'   `MFM_id`, `MFM_name`, `MFM_description`, and `pathway_class_all`.
 #' @param annotation_table A data frame containing the initial annotation weights.
 #' @param ranking_table A data frame containing the ranking of features (e.g., based on p-values or fold changes).
-#' @param n_cores Integer. Number of cores to use for parallel computing. Default is `NULL` (auto-detect or serial).
-#' @param min_compounds Integer. Minimum number of compounds required in a pathway. Default is 15.
-#' @param max_compounds Integer. Maximum number of compounds allowed in a pathway. Default is 300.
-#' @param id_col Character. The column name for compound IDs (e.g., "KEGG_ID"). Default is "KEGG_ID".
-#' @param n_perm Integer. Number of permutations for significance testing. Default is 1000.
+#' @param threads Integer. Number of threads to use for parallel computing. Default is `NULL` (auto-detect or serial).
+#' @param min.compounds.num Integer. Minimum number of compounds required in a pathway. Default is 15.
+#' @param max.compounds.num Integer. Maximum number of compounds allowed in a pathway. Default is 300.
+#' @param id.col Character. The column name for compound IDs (e.g., "KEGG_ID"). Default is "KEGG_ID".
+#' @param perm.num Integer. Number of permutations for significance testing. Default is 1000.
 #' @param seed Integer. Random seed for reproducibility. Default is 123.
-#' @param fdr_threshold Numeric. FDR threshold for selecting significant modules. Default is 0.05.
-#' @param max_iter Integer. Maximum number of iterations for the algorithm. Default is 10.
+#' @param fdr.thr Numeric. FDR threshold for selecting significant modules. Default is 0.05.
+#' @param max.iter.num Integer. Maximum number of iterations for the algorithm. Default is 10.
 #' @param verbose Logical. Whether to print progress messages. Default is `TRUE`.
 #'
 #' @return A list containing:
@@ -28,23 +28,23 @@
 #'   \item{iterations_used}{Integer. The number of iterations performed.}
 #' }
 #'
-#' @author Xiaotao Shen \email{xiaotao.shen@outlook.com}
-#' @author Yijiang Liu \email{liuyj8066@gmail.com}
+#' @author Xiaotao Shen \email{xiaotao.shen@@outlook.com}
+#' @author Yijiang Liu \email{ejoliu@@outlook.com}
 #'
 #' @importFrom dplyr left_join select %>%
 #' @export
 perform_fmsea_analysis <- function(
-    pathway_database,           
+    pathway_database,            
     annotation_table,
     ranking_table,
-    n_cores = NULL,
-    min_compounds = 15,
-    max_compounds = 300,
-    id_col = "KEGG_ID",
-    n_perm = 1000,
+    threads = NULL,
+    min.compounds.num = 15,   
+    max.compounds.num = 300,  
+    id.col = "KEGG_ID",       
+    perm.num = 1000,          
     seed = 123,
-    fdr_threshold = 0.05,
-    max_iter = 10,
+    fdr.thr = 0.05,           
+    max.iter.num = 10,        
     verbose = TRUE
 ) {
   if (verbose) message("Starting FMSEA iterative analysis...")
@@ -59,7 +59,8 @@ perform_fmsea_analysis <- function(
   last_feature_metabolite_count <- NULL
   last_significant_mfm <- NULL    
   
-  for (iter in seq_len(max_iter)) {
+  # Use max.iter.num here
+  for (iter in seq_len(max.iter.num)) {
     iter_used <- iter
     if (verbose) message(sprintf("Iteration %d: computing enrichment with current score annotation...", iter))
     
@@ -71,20 +72,20 @@ perform_fmsea_analysis <- function(
       pathway_dataset = pathway_database, 
       annotation_table = annotation_table_norm,
       ranking_table = ranking_table,
-      min_compounds = min_compounds,
-      max_compounds = max_compounds,
-      id_col = id_col,
-      n_perm = n_perm,
+      min_compounds = min.compounds.num, # Map new param to internal param
+      max_compounds = max.compounds.num, # Map new param to internal param
+      id_col = id.col,                   # Map new param to internal param
+      n_perm = perm.num,                 # Map new param to internal param
       seed = seed,
       return_perm = FALSE,
-      n_cores = n_cores,
+      n_cores = threads,
       verbose = verbose
     )
     
     # 3) select significant modules
     last_significant_mfm <- get_significant_mfm(
       last_res_list,
-      fdr_threshold = fdr_threshold
+      fdr_threshold = fdr.thr # Map new param to internal param
     )
     
     if (nrow(last_significant_mfm) == 0) {
@@ -96,7 +97,7 @@ perform_fmsea_analysis <- function(
     last_feature_metabolite_count <- get_fm_long_table(
       last_significant_mfm,
       last_res_list,
-      id_col = id_col
+      id_col = id.col # Map new param to internal param
     )
     
     # 5) new weighting table
@@ -120,7 +121,7 @@ perform_fmsea_analysis <- function(
   }
   
   if (!converged && verbose) {
-    message(sprintf("Reached the maximum iteration limit (%d) without convergence.", max_iter))
+    message(sprintf("Reached the maximum iteration limit (%d) without convergence.", max.iter.num))
   }
   
   significant_modules <- last_significant_mfm %>%
