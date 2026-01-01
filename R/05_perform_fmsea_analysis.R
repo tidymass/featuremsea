@@ -81,7 +81,7 @@ perform_fmsea_analysis <- function(
     )
     
     if (nrow(last_significant_mfm) == 0) {
-      if (verbose) message(sprintf("No significant modules found under the current FDR threshold. Stopping iteration."))
+      if (verbose) message(sprintf("No significant modules found under the current permutation number and FDR threshold. Stopping iteration."))
       break
     }
     
