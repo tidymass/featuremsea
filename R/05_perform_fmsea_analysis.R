@@ -116,6 +116,23 @@ perform_fmsea_analysis <- function(
     message(sprintf("Reached the maximum iteration limit (%d) without convergence.", max.iter.num))
   }
   
+  # --- FIX START: Handle NULLs if loop broke early (No significant modules) ---
+  if (is.null(last_feature_metabolite_count)) {
+    # Initialize empty data.frame to satisfy S4 class requirement
+    last_feature_metabolite_count <- data.frame() 
+  }
+  
+  if (is.null(last_annotation_table_weighting)) {
+    # Initialize empty data.frame to satisfy S4 class requirement
+    last_annotation_table_weighting <- data.frame()
+  }
+  
+  if (is.null(last_significant_mfm)) {
+    # Initialize empty data.frame to prevent left_join error below
+    last_significant_mfm <- data.frame(MFM_id = character())
+  }
+  # --- FIX END ---
+  
   significant_modules_final <- last_significant_mfm %>%
     dplyr::left_join(
       pathway_database[, c("MFM_id", "MFM_name", "MFM_description", "pathway_class_all")], 
