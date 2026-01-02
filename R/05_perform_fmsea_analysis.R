@@ -57,7 +57,7 @@ perform_fmsea_analysis <- function(
     if (verbose) message(sprintf("Iteration %d: computing enrichment with current score annotation...", iter))
     
     # 1) normalize score annotation
-    annotation_table_norm <- normalize_score_annotation_new(score_annotation = score_annotation_table)
+    annotation_table_norm <- normalize_score_annotation_global(score_annotation = score_annotation_table)
     
     # 2) compute results
     last_res_list <- parallel_computing_pathways_indexed_fast(

@@ -5,14 +5,35 @@
 # ------------------------------------------------------------
 # Normalize the annotation matrix
 # ------------------------------------------------------------
-normalize_score_annotation_new <- function(score_annotation) {
+# normalize_score_annotation_new <- function(score_annotation) {
+#   num_mat <- as.matrix(score_annotation)
+#   storage.mode(num_mat) <- "double"
+#   
+#   Sj <- colSums(num_mat, na.rm = TRUE)
+#   Sj[!is.finite(Sj) | Sj == 0] <- 1
+#   
+#   sweep(num_mat, 2, Sj, "/")
+# }
+
+normalize_score_annotation_global <- function(score_annotation) {
+  # 1. Convert input to a numeric matrix
+  # Ensure storage mode is double to prevent integer division issues
   num_mat <- as.matrix(score_annotation)
   storage.mode(num_mat) <- "double"
   
-  Sj <- colSums(num_mat, na.rm = TRUE)
-  Sj[!is.finite(Sj) | Sj == 0] <- 1
+  # 2. Calculate the global maximum value across the entire matrix
+  max_val <- max(num_mat, na.rm = TRUE)
   
-  sweep(num_mat, 2, Sj, "/")
+  # 3. Safety check: prevent division by zero or infinity
+  # If max_val is 0 (e.g., matrix of all zeros) or non-finite, set denominator to 1
+  # This ensures the original values are returned without generating NaNs or Infs
+  if (!is.finite(max_val) || max_val == 0) {
+    max_val <- 1
+  }
+  
+  # 4. Perform global normalization
+  # Divide every element in the matrix by the global maximum value
+  num_mat / max_val
 }
 
 # ------------------------------------------------------------
