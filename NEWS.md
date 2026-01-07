@@ -9,3 +9,7 @@
 # Version 0.1.2 (2026-01-02)
 
 * Change of scaling method.
+
+# Version 0.1.3 (2026-01-07)
+
+* Support for multiple pathway databases.

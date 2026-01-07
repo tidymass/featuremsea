@@ -9,11 +9,12 @@
 #'   \item{original_score_annotation}{Data frame of score matrix (variables rows x metabolites columns).}
 #'   \item{ranking_table}{Data frame with variable_id and ranking_weight columns.}
 #'
-#' @importFrom data.table as.data.table setnames :=
+#' @importFrom data.table as.data.table setnames
 #' @importFrom Matrix sparseMatrix
 #' @importFrom dplyr rename filter distinct arrange desc all_of
 #' @importFrom rlang sym .data
 #' @importFrom magrittr %>%
+#' @importFrom stats setNames
 #' @export
 process_annotation_table <- function(annotation_table_final2, 
                                      database_type = "HMDB") {

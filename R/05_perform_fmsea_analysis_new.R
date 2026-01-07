@@ -79,17 +79,24 @@ perform_fmsea_analysis_new <- function(
       map <- db_mappings[[db_name]]
       
       if (all(map %in% input_cols)) {
-        if (verbose) message(sprintf("  - Detected %s database format. Normalizing internally...", db_name))
+        if (verbose) message(sprintf("Detected %s database format. Normalizing internally...", db_name))
         
         # KEY STEP: Save the original names for the final output
         final_col_names <- as.list(map)
         
         # Rename to internal standard (MFM_*) for calculation
+        # pathway_database <- pathway_database %>%
+        #   dplyr::rename(
+        #     MFM_id = !!map["id"],
+        #     MFM_name = !!map["name"],
+        #     MFM_description = !!map["desc"]
+        #   )
+        
         pathway_database <- pathway_database %>%
           dplyr::rename(
-            MFM_id = !!map["id"],
-            MFM_name = !!map["name"],
-            MFM_description = !!map["desc"]
+            MFM_id = !!sym(map["id"]),
+            MFM_name = !!sym(map["name"]),
+            MFM_description = !!sym(map["desc"])
           )
         
         is_standardized <- TRUE
