@@ -124,13 +124,89 @@ build_ranking_index <- function(ranking_table) {
   )
 }
 
+# # ------------------------------------------------------------
+# # Precompute static information for mMSEA
+# # ------------------------------------------------------------
+# precompute_mMSEA_static <- function(pathway_ids_vec,
+#                                     annotation_long,
+#                                     rk_idx,
+#                                     id_col = "KEGG_ID") {
+#   id_vec  <- annotation_long[[id_col]]
+#   vid_all <- annotation_long[["variable_id"]]
+#   a_all   <- annotation_long[["a_ij"]]
+#   
+#   hits_ids <- intersect(pathway_ids_vec, unique(id_vec))
+#   if (length(hits_ids) == 0L) {
+#     return(NULL)
+#   }
+#   
+#   in_hits <- match(id_vec, hits_ids, nomatch = 0L) > 0L
+#   in_rank <- !is.na(match(vid_all, rk_idx$var_ids))
+#   keep    <- in_hits & in_rank & !is.na(a_all) & (a_all > 0)
+#   
+#   if (!any(keep)) {
+#     return(NULL)
+#   }
+#   
+#   vid_pairs <- vid_all[keep]
+#   id_pairs  <- id_vec[keep]
+#   a_pairs   <- a_all[keep]
+#   
+#   n_pairs_tab <- table(vid_pairs)
+#   n_pairs <- integer(length(rk_idx$var_ids))
+#   names(n_pairs) <- rk_idx$var_ids
+#   n_pairs[names(n_pairs_tab)] <- as.integer(n_pairs_tab)
+#   
+#   slot_count <- ifelse(n_pairs > 0L, n_pairs, 1L)
+#   total_slots <- sum(slot_count)
+#   
+#   ends   <- cumsum(slot_count)
+#   starts <- ends - slot_count + 1L
+#   
+#   pair_positions     <- integer(sum(n_pairs))
+#   miss_positions     <- integer(sum(slot_count == 1L & n_pairs == 0L))
+#   miss_variable_id   <- rep(NA_character_, total_slots)
+#   
+#   pp <- 1L
+#   mp <- 1L
+#   
+#   for (i in seq_along(rk_idx$var_ids)) {
+#     s <- starts[i]
+#     if (n_pairs[i] > 0L) {
+#       len <- n_pairs[i]
+#       idx <- s:(s + len - 1L)
+#       pair_positions[pp:(pp + len - 1L)] <- idx
+#       pp <- pp + len
+#     } else {
+#       miss_positions[mp]   <- s
+#       miss_variable_id[s]  <- rk_idx$var_ids[i]
+#       mp <- mp + 1L
+#     }
+#   }
+#   
+#   list(
+#     vid_pairs       = vid_pairs,
+#     id_pairs        = id_pairs,
+#     a_pairs         = a_pairs,
+#     total_slots     = total_slots,
+#     pair_positions  = pair_positions,
+#     miss_positions  = miss_positions,
+#     miss_variable_id = miss_variable_id,
+#     V               = rk_idx$V,
+#     var_ids         = rk_idx$var_ids,
+#     n_pairs         = n_pairs,
+#     slot_count      = slot_count
+#   )
+# }
+
 # ------------------------------------------------------------
 # Precompute static information for mMSEA
+# Double Weighting Strategy is PERMANENTLY ENABLED
 # ------------------------------------------------------------
 precompute_mMSEA_static <- function(pathway_ids_vec,
                                     annotation_long,
                                     rk_idx,
-                                    id_col = "KEGG_ID") {
+                                    id_col = "KEGG_ID") { # [移除] double_weighting 参数
   id_vec  <- annotation_long[[id_col]]
   vid_all <- annotation_long[["variable_id"]]
   a_all   <- annotation_long[["a_ij"]]
@@ -152,6 +228,26 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
   id_pairs  <- id_vec[keep]
   a_pairs   <- a_all[keep]
   
+  # ============================================================
+  # Double Weighting Strategy (Always Executed)
+  # ============================================================
+  # 1. 计算全局代谢物冗余度 (即每个代谢物对应多少个 Feature)
+  # 使用整个 annotation 表的 id_vec 进行统计，确保反映真实的"一对多"情况
+  met_counts_all <- table(id_vec)
+  
+  # 2. 获取当前筛选出的 pairs 对应的代谢物计数
+  # 使用 character indexing 快速匹配
+  counts_for_pairs <- as.numeric(met_counts_all[id_pairs])
+  
+  # 3. 计算惩罚权重 w_j = 1 / sqrt(N_j)
+  # 既惩罚了冗余，又保留了 Feature 内部的相对打分差异
+  w_j <- 1 / sqrt(counts_for_pairs)
+  
+  # 4. 更新注释分数
+  # a_pairs 在这里被直接修改，后续所有计算(ES/Permutation)均基于此加权值
+  a_pairs <- a_pairs * w_j
+  # ============================================================
+  
   n_pairs_tab <- table(vid_pairs)
   n_pairs <- integer(length(rk_idx$var_ids))
   names(n_pairs) <- rk_idx$var_ids
@@ -163,9 +259,9 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
   ends   <- cumsum(slot_count)
   starts <- ends - slot_count + 1L
   
-  pair_positions     <- integer(sum(n_pairs))
-  miss_positions     <- integer(sum(slot_count == 1L & n_pairs == 0L))
-  miss_variable_id   <- rep(NA_character_, total_slots)
+  pair_positions      <- integer(sum(n_pairs))
+  miss_positions      <- integer(sum(slot_count == 1L & n_pairs == 0L))
+  miss_variable_id    <- rep(NA_character_, total_slots)
   
   pp <- 1L
   mp <- 1L
@@ -187,7 +283,7 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
   list(
     vid_pairs       = vid_pairs,
     id_pairs        = id_pairs,
-    a_pairs         = a_pairs,
+    a_pairs         = a_pairs, # 始终包含二次加权逻辑
     total_slots     = total_slots,
     pair_positions  = pair_positions,
     miss_positions  = miss_positions,
@@ -198,6 +294,7 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
     slot_count      = slot_count
   )
 }
+
 
 # ------------------------------------------------------------
 # Compute ES given a ranking mapping
