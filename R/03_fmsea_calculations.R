@@ -414,11 +414,127 @@ build_ranking_index <- function(ranking_table) {
 #   )
 # }
 
+# # ------------------------------------------------------------
+# # Precompute static information for mMSEA
+# # Updated with:
+# # 1. Metabolite-level Penalization (Linear: 1/N)
+# # 2. Feature-level Penalization (Ambiguity Correction: 1/K)
+# # ------------------------------------------------------------
+# precompute_mMSEA_static <- function(pathway_ids_vec,
+#                                     annotation_long,
+#                                     rk_idx,
+#                                     id_col = "KEGG_ID") {
+#   id_vec  <- annotation_long[[id_col]]
+#   vid_all <- annotation_long[["variable_id"]]
+#   a_all   <- annotation_long[["a_ij"]]
+#   
+#   hits_ids <- intersect(pathway_ids_vec, unique(id_vec))
+#   if (length(hits_ids) == 0L) {
+#     return(NULL)
+#   }
+#   
+#   in_hits <- match(id_vec, hits_ids, nomatch = 0L) > 0L
+#   in_rank <- !is.na(match(vid_all, rk_idx$var_ids))
+#   keep    <- in_hits & in_rank & !is.na(a_all) & (a_all > 0)
+#   
+#   if (!any(keep)) {
+#     return(NULL)
+#   }
+#   
+#   vid_pairs <- vid_all[keep]
+#   id_pairs  <- id_vec[keep]
+#   a_pairs   <- a_all[keep]
+#   
+#   # ============================================================
+#   # WEIGHTING STRATEGIES (双重加权策略)
+#   # ============================================================
+#   
+#   # --- 策略 1: Metabolite-level Penalization (针对代谢物冗余) ---
+#   # 解决 "1 Metabolite -> N Features" 问题 [cite: 60]
+#   # 采用 1/N 线性归一化，确保该代谢物在通路中的总贡献权重大约为 1 [cite: 166, 167]
+#   
+#   # 1. 计算全局代谢物冗余度 (即每个代谢物对应多少个 Feature) [cite: 160]
+#   met_counts_all <- table(id_vec)
+#   
+#   # 2. 获取当前 pairs 对应的代谢物计数
+#   counts_for_pairs_met <- as.numeric(met_counts_all[id_pairs])
+#   
+#   # 3. 计算代谢物惩罚权重 (采用 1/N) 
+#   w_met <- 1 / counts_for_pairs_met
+#   
+#   
+#   # --- 策略 2: Feature-level Penalization (针对特征歧义) ---
+#   # 解决 "1 Feature -> N Metabolites" 问题
+#   # 确保一个 Feature 的总贡献不会超过其自身的 Ranking Weight
+#   
+#   # 1. 计算每个 Feature 对应了多少个 Metabolite
+#   feat_counts_all <- table(vid_all)
+#   
+#   # 2. 获取当前 pairs 对应的 Feature 计数
+#   counts_for_pairs_feat <- as.numeric(feat_counts_all[vid_pairs])
+#   
+#   # 3. 计算特征歧义惩罚权重 (采用 1/K)
+#   w_feat <- 1 / counts_for_pairs_feat
+#   
+#   
+#   # --- 应用联合权重 ---
+#   # 更新注释分数：原始分 * (1/N_met) * (1/K_feat)
+#   a_pairs <- a_pairs * w_met * w_feat
+#   
+#   # ============================================================
+#   
+#   n_pairs_tab <- table(vid_pairs)
+#   n_pairs <- integer(length(rk_idx$var_ids))
+#   names(n_pairs) <- rk_idx$var_ids
+#   n_pairs[names(n_pairs_tab)] <- as.integer(n_pairs_tab)
+#   
+#   slot_count <- ifelse(n_pairs > 0L, n_pairs, 1L)
+#   total_slots <- sum(slot_count)
+#   
+#   ends   <- cumsum(slot_count)
+#   starts <- ends - slot_count + 1L
+#   
+#   pair_positions      <- integer(sum(n_pairs))
+#   miss_positions      <- integer(sum(slot_count == 1L & n_pairs == 0L))
+#   miss_variable_id    <- rep(NA_character_, total_slots)
+#   
+#   pp <- 1L
+#   mp <- 1L
+#   
+#   for (i in seq_along(rk_idx$var_ids)) {
+#     s <- starts[i]
+#     if (n_pairs[i] > 0L) {
+#       len <- n_pairs[i]
+#       idx <- s:(s + len - 1L)
+#       pair_positions[pp:(pp + len - 1L)] <- idx
+#       pp <- pp + len
+#     } else {
+#       miss_positions[mp]   <- s
+#       miss_variable_id[s]  <- rk_idx$var_ids[i]
+#       mp <- mp + 1L
+#     }
+#   }
+#   
+#   list(
+#     vid_pairs       = vid_pairs,
+#     id_pairs        = id_pairs,
+#     a_pairs         = a_pairs, 
+#     total_slots     = total_slots,
+#     pair_positions  = pair_positions,
+#     miss_positions  = miss_positions,
+#     miss_variable_id = miss_variable_id,
+#     V               = rk_idx$V,
+#     var_ids         = rk_idx$var_ids,
+#     n_pairs         = n_pairs,
+#     slot_count      = slot_count
+#   )
+# }
+
 # ------------------------------------------------------------
 # Precompute static information for mMSEA
-# Updated with:
-# 1. Metabolite-level Penalization (Linear: 1/N)
-# 2. Feature-level Penalization (Ambiguity Correction: 1/K)
+# Updated with Unified Square Root Weighting:
+# 1. Metabolite-level Penalization (1/sqrt(N_met))
+# 2. Feature-level Penalization (1/sqrt(K_feat))
 # ------------------------------------------------------------
 precompute_mMSEA_static <- function(pathway_ids_vec,
                                     annotation_long,
@@ -446,41 +562,26 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
   a_pairs   <- a_all[keep]
   
   # ============================================================
-  # WEIGHTING STRATEGIES (双重加权策略)
+  # UNIFIED WEIGHTING STRATEGIES (统一采用 1/根号N)
   # ============================================================
   
-  # --- 策略 1: Metabolite-level Penalization (针对代谢物冗余) ---
-  # 解决 "1 Metabolite -> N Features" 问题 [cite: 60]
-  # 采用 1/N 线性归一化，确保该代谢物在通路中的总贡献权重大约为 1 [cite: 166, 167]
-  
-  # 1. 计算全局代谢物冗余度 (即每个代谢物对应多少个 Feature) [cite: 160]
+  # --- 策略 1: 代谢物级惩罚 (解决 1 Met -> N Features) ---
+  # 计算全局代谢物冗余度
   met_counts_all <- table(id_vec)
-  
-  # 2. 获取当前 pairs 对应的代谢物计数
+  # 获取当前 pairs 对应的代谢物计数并计算 1/sqrt(N)
   counts_for_pairs_met <- as.numeric(met_counts_all[id_pairs])
+  w_met <- 1 / sqrt(counts_for_pairs_met)
   
-  # 3. 计算代谢物惩罚权重 (采用 1/N) 
-  w_met <- 1 / counts_for_pairs_met
-  
-  
-  # --- 策略 2: Feature-level Penalization (针对特征歧义) ---
-  # 解决 "1 Feature -> N Metabolites" 问题
-  # 确保一个 Feature 的总贡献不会超过其自身的 Ranking Weight
-  
-  # 1. 计算每个 Feature 对应了多少个 Metabolite
+  # --- 策略 2: 特征级惩罚 (解决 1 Feature -> K Mets) ---
+  # 计算每个特征对应的候选代谢物数量
   feat_counts_all <- table(vid_all)
-  
-  # 2. 获取当前 pairs 对应的 Feature 计数
+  # 获取当前 pairs 对应的特征计数并计算 1/sqrt(K)
   counts_for_pairs_feat <- as.numeric(feat_counts_all[vid_pairs])
-  
-  # 3. 计算特征歧义惩罚权重 (采用 1/K)
-  w_feat <- 1 / counts_for_pairs_feat
-  
+  w_feat <- 1 / sqrt(counts_for_pairs_feat)
   
   # --- 应用联合权重 ---
-  # 更新注释分数：原始分 * (1/N_met) * (1/K_feat)
+  # 更新注释分数：原始分 * (1/sqrt(N_met)) * (1/sqrt(K_feat))
   a_pairs <- a_pairs * w_met * w_feat
-  
   # ============================================================
   
   n_pairs_tab <- table(vid_pairs)
@@ -529,7 +630,6 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
     slot_count      = slot_count
   )
 }
-
 
 # ------------------------------------------------------------
 # Compute ES given a ranking mapping
