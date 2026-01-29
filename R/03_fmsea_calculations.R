@@ -296,9 +296,139 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
 }
 
 
+# # ------------------------------------------------------------
+# # Compute ES given a ranking mapping
+# # (with leading-edge truncation at ES peak)
+# # ------------------------------------------------------------
+# compute_ES_from_mapping <- function(static,
+#                                     weights_by_pos,
+#                                     var2pos,
+#                                     id_col = "KEGG_ID",
+#                                     return_details = FALSE,
+#                                     pair_positions_override = NULL,
+#                                     miss_positions_override = NULL,
+#                                     miss_variable_id_override = NULL) {
+#   pos <- unname(var2pos[static$vid_pairs])
+#   wgt <- weights_by_pos[pos]
+#   
+#   pw   <- static$a_pairs * wgt
+#   keep <- !is.na(pw) & (pw > 0)
+#   
+#   if (!any(keep)) {
+#     out <- list(ES = NA_real_)
+#     if (return_details) {
+#       out[["leading_edge"]] <- NULL
+#       out[["steps"]]        <- NULL
+#     }
+#     return(out)
+#   }
+#   
+#   pw  <- pw[keep]
+#   vhk <- static$vid_pairs[keep]
+#   idk <- static$id_pairs[keep]
+#   
+#   ord         <- order(pw, decreasing = TRUE)
+#   top_idx_all <- ord
+#   
+#   pair_pos <- if (is.null(pair_positions_override)) {
+#     static$pair_positions
+#   } else {
+#     pair_positions_override
+#   }
+#   
+#   miss_pos <- if (is.null(miss_positions_override)) {
+#     static$miss_positions
+#   } else {
+#     miss_positions_override
+#   }
+#   
+#   total_slots <- length(pair_pos) + length(miss_pos)
+#   
+#   n_fill <- min(length(pair_pos), length(ord))
+#   step  <- numeric(total_slots)
+#   
+#   if (n_fill == 0L) {
+#     if (length(miss_pos) > 0L) {
+#       step[miss_pos] <- -1 / length(miss_pos)
+#     }
+#     ES_cum <- cumsum(step)
+#     return(list(ES = max(ES_cum)))
+#   }
+#   
+#   top_idx <- top_idx_all[seq_len(n_fill)]
+#   top_pw  <- pw[top_idx]
+#   
+#   hit_total <- sum(top_pw)
+#   if (!is.finite(hit_total) || hit_total <= 0) {
+#     return(list(ES = NA_real_))
+#   }
+#   
+#   step[pair_pos[seq_len(n_fill)]] <- top_pw / hit_total
+#   
+#   N_miss <- length(miss_pos)
+#   if (N_miss > 0L) {
+#     step[miss_pos] <- -1 / N_miss
+#   }
+#   
+#   ES_cum <- cumsum(step)
+#   ES_val <- max(ES_cum)
+#   
+#   if (!return_details) {
+#     return(list(ES = ES_val))
+#   }
+#   
+#   # Leading edge
+#   max_idx <- which.max(ES_cum)
+#   positions_assigned <- pair_pos[seq_len(n_fill)]
+#   keep_le <- positions_assigned <= max_idx
+#   
+#   leading_edge <- data.frame(
+#     variable_id    = vhk[top_idx][keep_le],
+#     tmp_id         = idk[top_idx][keep_le],
+#     pair_weight    = top_pw[keep_le],
+#     a_ij           = static$a_pairs[keep][top_idx][keep_le],
+#     ranking_weight = wgt[keep][top_idx][keep_le],
+#     stringsAsFactors = FALSE
+#   )
+#   names(leading_edge)[names(leading_edge) == "tmp_id"] <- id_col
+#   
+#   type <- rep("miss", total_slots)
+#   type[pair_pos] <- "pair_slot"
+#   
+#   variable_id_miss <- if (is.null(miss_variable_id_override)) {
+#     static$miss_variable_id
+#   } else {
+#     miss_variable_id_override
+#   }
+#   
+#   variable_id_hit <- rep(NA_character_, total_slots)
+#   id_hit          <- rep(NA_character_, total_slots)
+#   
+#   variable_id_hit[pair_pos[seq_len(n_fill)]] <- vhk[top_idx]
+#   id_hit[pair_pos[seq_len(n_fill)]]          <- idk[top_idx]
+#   
+#   steps <- data.frame(
+#     order_pos        = seq_len(total_slots),
+#     type             = type,
+#     variable_id_miss = variable_id_miss,
+#     variable_id_hit  = variable_id_hit,
+#     tmp_id           = id_hit,
+#     step             = step,
+#     ES_cum           = ES_cum,
+#     stringsAsFactors = FALSE
+#   )
+#   names(steps)[names(steps) == "tmp_id"] <- id_col
+#   
+#   list(
+#     ES           = ES_val,
+#     leading_edge = leading_edge,
+#     steps        = steps
+#   )
+# }
+
 # ------------------------------------------------------------
 # Compute ES given a ranking mapping
-# (with leading-edge truncation at ES peak)
+# (Modified: Feature only contributes score on first occurrence)
 # ------------------------------------------------------------
 compute_ES_from_mapping <- function(static,
                                     weights_by_pos,
@@ -311,6 +441,7 @@ compute_ES_from_mapping <- function(static,
   pos <- unname(var2pos[static$vid_pairs])
   wgt <- weights_by_pos[pos]
   
+  # 原始 Pair Weight
   pw   <- static$a_pairs * wgt
   keep <- !is.na(pw) & (pw > 0)
   
@@ -327,6 +458,7 @@ compute_ES_from_mapping <- function(static,
   vhk <- static$vid_pairs[keep]
   idk <- static$id_pairs[keep]
   
+  # 1. 按照权重从大到小排序
   ord         <- order(pw, decreasing = TRUE)
   top_idx_all <- ord
   
@@ -343,9 +475,8 @@ compute_ES_from_mapping <- function(static,
   }
   
   total_slots <- length(pair_pos) + length(miss_pos)
-  
   n_fill <- min(length(pair_pos), length(ord))
-  step  <- numeric(total_slots)
+  step   <- numeric(total_slots)
   
   if (n_fill == 0L) {
     if (length(miss_pos) > 0L) {
@@ -355,15 +486,36 @@ compute_ES_from_mapping <- function(static,
     return(list(ES = max(ES_cum)))
   }
   
-  top_idx <- top_idx_all[seq_len(n_fill)]
-  top_pw  <- pw[top_idx]
+  # --- [新增/修改逻辑开始] ---
   
-  hit_total <- sum(top_pw)
+  # 获取排序后的 Feature ID
+  top_idx     <- top_idx_all[seq_len(n_fill)]
+  sorted_vids <- vhk[top_idx]
+  
+  # 识别重复的 Feature (sorted_vids 中第二次及以后出现的标记为 TRUE)
+  is_dup <- duplicated(sorted_vids)
+  
+  # 获取原始排序后的权重
+  top_pw_raw <- pw[top_idx]
+  
+  # 创建"有效权重" (effective weights)
+  # 如果是重复出现的 Feature，将其有效权重设为 0
+  top_pw_effective <- top_pw_raw
+  top_pw_effective[is_dup] <- 0
+  
+  # 计算总 Hit 分数时，只使用有效权重（即去重后的总分）
+  # 这样分母更合理，避免被重复项稀释
+  hit_total <- sum(top_pw_effective)
+  
   if (!is.finite(hit_total) || hit_total <= 0) {
     return(list(ES = NA_real_))
   }
   
-  step[pair_pos[seq_len(n_fill)]] <- top_pw / hit_total
+  # 计算步长：使用有效权重计算
+  # 重复的 Feature 这里分子是 0，步长也是 0，曲线会走平路
+  step[pair_pos[seq_len(n_fill)]] <- top_pw_effective / hit_total
+  
+  # --- [新增/修改逻辑结束] ---
   
   N_miss <- length(miss_pos)
   if (N_miss > 0L) {
@@ -385,9 +537,15 @@ compute_ES_from_mapping <- function(static,
   leading_edge <- data.frame(
     variable_id    = vhk[top_idx][keep_le],
     tmp_id         = idk[top_idx][keep_le],
-    pair_weight    = top_pw[keep_le],
+    
+    # 这里输出 effective weight，这样用户能直观看到重复项的贡献是 0
+    # 如果想保留原始计算权重供参考，可以增加一列 original_weight
+    pair_weight    = top_pw_effective[keep_le], 
+    original_weight = top_pw_raw[keep_le],     # 新增：原始权重供参考
+    
     a_ij           = static$a_pairs[keep][top_idx][keep_le],
     ranking_weight = wgt[keep][top_idx][keep_le],
+    is_duplicate   = is_dup[keep_le],          # 新增：标记是否因为重复被归零
     stringsAsFactors = FALSE
   )
   names(leading_edge)[names(leading_edge) == "tmp_id"] <- id_col
@@ -425,6 +583,8 @@ compute_ES_from_mapping <- function(static,
     steps        = steps
   )
 }
+
+
 
 # ------------------------------------------------------------
 # Main function: mMSEA with C++ permutation back-end
