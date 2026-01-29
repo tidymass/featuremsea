@@ -470,7 +470,7 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
   counts_for_pairs <- as.numeric(met_counts_all[id_pairs])
 
   # CHANGE: From 1/sqrt(N) to 1/N for linear penalty
-  w_j <- 1 / (counts_for_pairs^2)
+  w_j <- 1 / sqrt(counts_for_pairs)
 
   # Apply penalty to annotation scores
   a_pairs <- a_pairs * w_j
