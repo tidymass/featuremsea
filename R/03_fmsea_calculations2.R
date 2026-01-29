@@ -443,7 +443,7 @@ get_mMSEA_results_indexed_fast <- function(
   # Use C++ to compute permutation ES values with metabolite deduplication
   vid_pairs_idx <- match(static$vid_pairs_for_cpp, rk_idx$var_ids) - 1L
   
-  perm_ES <- compute_permutations_with_dedup_cpp(
+  perm_ES <- compute_permutations_cpp(
     vid_pairs_idx   = as.integer(vid_pairs_idx),
     met_ids_encoded = as.integer(static$met_ids_encoded),
     a_pairs         = static$a_pairs_for_cpp,
