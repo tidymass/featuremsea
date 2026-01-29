@@ -199,55 +199,173 @@ build_ranking_index <- function(ranking_table) {
 #   )
 # }
 
+# # ------------------------------------------------------------
+# # Precompute static information for mMSEA
+# # Double Weighting Strategy is PERMANENTLY ENABLED
+# # ------------------------------------------------------------
+# precompute_mMSEA_static <- function(pathway_ids_vec,
+#                                     annotation_long,
+#                                     rk_idx,
+#                                     id_col = "KEGG_ID") { # [移除] double_weighting 参数
+#   id_vec  <- annotation_long[[id_col]]
+#   vid_all <- annotation_long[["variable_id"]]
+#   a_all   <- annotation_long[["a_ij"]]
+#   
+#   hits_ids <- intersect(pathway_ids_vec, unique(id_vec))
+#   if (length(hits_ids) == 0L) {
+#     return(NULL)
+#   }
+#   
+#   in_hits <- match(id_vec, hits_ids, nomatch = 0L) > 0L
+#   in_rank <- !is.na(match(vid_all, rk_idx$var_ids))
+#   keep    <- in_hits & in_rank & !is.na(a_all) & (a_all > 0)
+#   
+#   if (!any(keep)) {
+#     return(NULL)
+#   }
+#   
+#   vid_pairs <- vid_all[keep]
+#   id_pairs  <- id_vec[keep]
+#   a_pairs   <- a_all[keep]
+#   
+#   # ============================================================
+#   # Double Weighting Strategy (Always Executed)
+#   # ============================================================
+#   # 1. 计算全局代谢物冗余度 (即每个代谢物对应多少个 Feature)
+#   # 使用整个 annotation 表的 id_vec 进行统计，确保反映真实的"一对多"情况
+#   met_counts_all <- table(id_vec)
+#   
+#   # 2. 获取当前筛选出的 pairs 对应的代谢物计数
+#   # 使用 character indexing 快速匹配
+#   counts_for_pairs <- as.numeric(met_counts_all[id_pairs])
+#   
+#   # 3. 计算惩罚权重 w_j = 1 / sqrt(N_j)
+#   # 既惩罚了冗余，又保留了 Feature 内部的相对打分差异
+#   w_j <- 1 / sqrt(counts_for_pairs)
+#   
+#   # 4. 更新注释分数
+#   # a_pairs 在这里被直接修改，后续所有计算(ES/Permutation)均基于此加权值
+#   a_pairs <- a_pairs * w_j
+#   # ============================================================
+#   
+#   n_pairs_tab <- table(vid_pairs)
+#   n_pairs <- integer(length(rk_idx$var_ids))
+#   names(n_pairs) <- rk_idx$var_ids
+#   n_pairs[names(n_pairs_tab)] <- as.integer(n_pairs_tab)
+#   
+#   slot_count <- ifelse(n_pairs > 0L, n_pairs, 1L)
+#   total_slots <- sum(slot_count)
+#   
+#   ends   <- cumsum(slot_count)
+#   starts <- ends - slot_count + 1L
+#   
+#   pair_positions      <- integer(sum(n_pairs))
+#   miss_positions      <- integer(sum(slot_count == 1L & n_pairs == 0L))
+#   miss_variable_id    <- rep(NA_character_, total_slots)
+#   
+#   pp <- 1L
+#   mp <- 1L
+#   
+#   for (i in seq_along(rk_idx$var_ids)) {
+#     s <- starts[i]
+#     if (n_pairs[i] > 0L) {
+#       len <- n_pairs[i]
+#       idx <- s:(s + len - 1L)
+#       pair_positions[pp:(pp + len - 1L)] <- idx
+#       pp <- pp + len
+#     } else {
+#       miss_positions[mp]   <- s
+#       miss_variable_id[s]  <- rk_idx$var_ids[i]
+#       mp <- mp + 1L
+#     }
+#   }
+#   
+#   list(
+#     vid_pairs       = vid_pairs,
+#     id_pairs        = id_pairs,
+#     a_pairs         = a_pairs, # 始终包含二次加权逻辑
+#     total_slots     = total_slots,
+#     pair_positions  = pair_positions,
+#     miss_positions  = miss_positions,
+#     miss_variable_id = miss_variable_id,
+#     V               = rk_idx$V,
+#     var_ids         = rk_idx$var_ids,
+#     n_pairs         = n_pairs,
+#     slot_count      = slot_count
+#   )
+# }
+
 # ------------------------------------------------------------
 # Precompute static information for mMSEA
-# Double Weighting Strategy is PERMANENTLY ENABLED
+# (Modified: Deduplicate for stats, but aggregate IDs for display)
 # ------------------------------------------------------------
 precompute_mMSEA_static <- function(pathway_ids_vec,
                                     annotation_long,
                                     rk_idx,
-                                    id_col = "KEGG_ID") { # [移除] double_weighting 参数
+                                    id_col = "KEGG_ID") {
   id_vec  <- annotation_long[[id_col]]
   vid_all <- annotation_long[["variable_id"]]
   a_all   <- annotation_long[["a_ij"]]
   
+  # 1. 基础筛选
   hits_ids <- intersect(pathway_ids_vec, unique(id_vec))
-  if (length(hits_ids) == 0L) {
-    return(NULL)
-  }
+  if (length(hits_ids) == 0L) return(NULL)
   
   in_hits <- match(id_vec, hits_ids, nomatch = 0L) > 0L
   in_rank <- !is.na(match(vid_all, rk_idx$var_ids))
   keep    <- in_hits & in_rank & !is.na(a_all) & (a_all > 0)
   
-  if (!any(keep)) {
-    return(NULL)
-  }
+  if (!any(keep)) return(NULL)
   
   vid_pairs <- vid_all[keep]
   id_pairs  <- id_vec[keep]
   a_pairs   <- a_all[keep]
   
-  # ============================================================
-  # Double Weighting Strategy (Always Executed)
-  # ============================================================
-  # 1. 计算全局代谢物冗余度 (即每个代谢物对应多少个 Feature)
-  # 使用整个 annotation 表的 id_vec 进行统计，确保反映真实的"一对多"情况
+  # 2. Double Weighting (冗余惩罚)
   met_counts_all <- table(id_vec)
-  
-  # 2. 获取当前筛选出的 pairs 对应的代谢物计数
-  # 使用 character indexing 快速匹配
   counts_for_pairs <- as.numeric(met_counts_all[id_pairs])
-  
-  # 3. 计算惩罚权重 w_j = 1 / sqrt(N_j)
-  # 既惩罚了冗余，又保留了 Feature 内部的相对打分差异
   w_j <- 1 / sqrt(counts_for_pairs)
-  
-  # 4. 更新注释分数
-  # a_pairs 在这里被直接修改，后续所有计算(ES/Permutation)均基于此加权值
   a_pairs <- a_pairs * w_j
+  
+  # ============================================================
+  # [NEW] Feature Deduplication & Aggregation
   # ============================================================
   
+  # 创建临时数据框
+  temp_df <- data.frame(
+    vid = vid_pairs,
+    id  = id_pairs,
+    a   = a_pairs,
+    stringsAsFactors = FALSE
+  )
+  
+  # A. 聚合信息：找出每个 Feature 对应的所有代谢物 ID
+  # 使用 base R 的 aggregate 函数，将 ID 用分号拼接
+  # 结果: vid | all_ids
+  agg_res <- aggregate(id ~ vid, data = temp_df, FUN = function(x) {
+    paste(unique(x), collapse = "; ")
+  })
+  colnames(agg_res)[2] <- "all_mapped_ids" # 重命名列
+  
+  # B. 排序并去重：为了计算分数，保留分数(a)最高的那个
+  temp_df <- temp_df[order(temp_df$a, decreasing = TRUE), ]
+  is_dup_vid <- duplicated(temp_df$vid)
+  temp_df_clean <- temp_df[!is_dup_vid, ]
+  
+  # C. 合并信息：把拼接好的 ID 贴回到去重后的表上
+  # 注意：merge 可能会改变顺序，所以合并后最好再根据原始 rk_idx 顺序或其他逻辑确认一下，
+  # 但在这里只要 vid 对应即可。
+  temp_df_clean <- merge(temp_df_clean, agg_res, by = "vid", sort = FALSE)
+  
+  # 重新赋值
+  vid_pairs      <- temp_df_clean$vid
+  id_pairs       <- temp_df_clean$id             # 这是主要的ID（分数最高的）
+  all_mapped_ids <- temp_df_clean$all_mapped_ids # 这是所有关联的ID（用于展示）
+  a_pairs        <- temp_df_clean$a
+  
+  # ============================================================
+  
+  # 后续逻辑不变
   n_pairs_tab <- table(vid_pairs)
   n_pairs <- integer(length(rk_idx$var_ids))
   names(n_pairs) <- rk_idx$var_ids
@@ -263,19 +381,38 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
   miss_positions      <- integer(sum(slot_count == 1L & n_pairs == 0L))
   miss_variable_id    <- rep(NA_character_, total_slots)
   
+  # [重要] 我们需要对齐 all_mapped_ids 和 pair_positions 的顺序
+  # 因为 n_pairs 的构建是基于 vid_pairs 的统计，
+  # 我们需要一个能够按 vid_pairs 顺序提取 all_mapped_ids 的向量
+  
+  # 创建一个查找表 (named vector)
+  map_lookup <- setNames(all_mapped_ids, vid_pairs)
+  
   pp <- 1L
   mp <- 1L
   
+  # 这个向量用于存储最终排序后的 all_mapped_ids，长度等于 pair_positions 的长度
+  # 初始化为 NA
+  sorted_all_ids <- rep(NA_character_, sum(n_pairs))
+  
   for (i in seq_along(rk_idx$var_ids)) {
     s <- starts[i]
+    curr_vid <- rk_idx$var_ids[i]
+    
     if (n_pairs[i] > 0L) {
       len <- n_pairs[i]
       idx <- s:(s + len - 1L)
       pair_positions[pp:(pp + len - 1L)] <- idx
+      
+      # [NEW] 在这里记录该位置对应的所有ID
+      # 因为我们在去重后，一个 vid 在当前通路只有一条记录
+      # 所以直接取 lookup 的值即可
+      sorted_all_ids[pp:(pp + len - 1L)] <- map_lookup[curr_vid]
+      
       pp <- pp + len
     } else {
       miss_positions[mp]   <- s
-      miss_variable_id[s]  <- rk_idx$var_ids[i]
+      miss_variable_id[s]  <- curr_vid
       mp <- mp + 1L
     }
   }
@@ -283,7 +420,11 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
   list(
     vid_pairs       = vid_pairs,
     id_pairs        = id_pairs,
-    a_pairs         = a_pairs, # 始终包含二次加权逻辑
+    a_pairs         = a_pairs,
+    
+    # 新增这个字段，传给 compute_ES 使用
+    sorted_all_ids  = sorted_all_ids, 
+    
     total_slots     = total_slots,
     pair_positions  = pair_positions,
     miss_positions  = miss_positions,
@@ -294,7 +435,6 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
     slot_count      = slot_count
   )
 }
-
 
 # # ------------------------------------------------------------
 # # Compute ES given a ranking mapping
@@ -310,10 +450,10 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
 #                                     miss_variable_id_override = NULL) {
 #   pos <- unname(var2pos[static$vid_pairs])
 #   wgt <- weights_by_pos[pos]
-#   
+# 
 #   pw   <- static$a_pairs * wgt
 #   keep <- !is.na(pw) & (pw > 0)
-#   
+# 
 #   if (!any(keep)) {
 #     out <- list(ES = NA_real_)
 #     if (return_details) {
@@ -322,31 +462,31 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
 #     }
 #     return(out)
 #   }
-#   
+# 
 #   pw  <- pw[keep]
 #   vhk <- static$vid_pairs[keep]
 #   idk <- static$id_pairs[keep]
-#   
+# 
 #   ord         <- order(pw, decreasing = TRUE)
 #   top_idx_all <- ord
-#   
+# 
 #   pair_pos <- if (is.null(pair_positions_override)) {
 #     static$pair_positions
 #   } else {
 #     pair_positions_override
 #   }
-#   
+# 
 #   miss_pos <- if (is.null(miss_positions_override)) {
 #     static$miss_positions
 #   } else {
 #     miss_positions_override
 #   }
-#   
+# 
 #   total_slots <- length(pair_pos) + length(miss_pos)
-#   
+# 
 #   n_fill <- min(length(pair_pos), length(ord))
 #   step  <- numeric(total_slots)
-#   
+# 
 #   if (n_fill == 0L) {
 #     if (length(miss_pos) > 0L) {
 #       step[miss_pos] <- -1 / length(miss_pos)
@@ -354,34 +494,34 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
 #     ES_cum <- cumsum(step)
 #     return(list(ES = max(ES_cum)))
 #   }
-#   
+# 
 #   top_idx <- top_idx_all[seq_len(n_fill)]
 #   top_pw  <- pw[top_idx]
-#   
+# 
 #   hit_total <- sum(top_pw)
 #   if (!is.finite(hit_total) || hit_total <= 0) {
 #     return(list(ES = NA_real_))
 #   }
-#   
+# 
 #   step[pair_pos[seq_len(n_fill)]] <- top_pw / hit_total
-#   
+# 
 #   N_miss <- length(miss_pos)
 #   if (N_miss > 0L) {
 #     step[miss_pos] <- -1 / N_miss
 #   }
-#   
+# 
 #   ES_cum <- cumsum(step)
 #   ES_val <- max(ES_cum)
-#   
+# 
 #   if (!return_details) {
 #     return(list(ES = ES_val))
 #   }
-#   
+# 
 #   # Leading edge
 #   max_idx <- which.max(ES_cum)
 #   positions_assigned <- pair_pos[seq_len(n_fill)]
 #   keep_le <- positions_assigned <= max_idx
-#   
+# 
 #   leading_edge <- data.frame(
 #     variable_id    = vhk[top_idx][keep_le],
 #     tmp_id         = idk[top_idx][keep_le],
@@ -391,22 +531,22 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
 #     stringsAsFactors = FALSE
 #   )
 #   names(leading_edge)[names(leading_edge) == "tmp_id"] <- id_col
-#   
+# 
 #   type <- rep("miss", total_slots)
 #   type[pair_pos] <- "pair_slot"
-#   
+# 
 #   variable_id_miss <- if (is.null(miss_variable_id_override)) {
 #     static$miss_variable_id
 #   } else {
 #     miss_variable_id_override
 #   }
-#   
+# 
 #   variable_id_hit <- rep(NA_character_, total_slots)
 #   id_hit          <- rep(NA_character_, total_slots)
-#   
+# 
 #   variable_id_hit[pair_pos[seq_len(n_fill)]] <- vhk[top_idx]
 #   id_hit[pair_pos[seq_len(n_fill)]]          <- idk[top_idx]
-#   
+# 
 #   steps <- data.frame(
 #     order_pos        = seq_len(total_slots),
 #     type             = type,
@@ -418,7 +558,7 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
 #     stringsAsFactors = FALSE
 #   )
 #   names(steps)[names(steps) == "tmp_id"] <- id_col
-#   
+# 
 #   list(
 #     ES           = ES_val,
 #     leading_edge = leading_edge,
@@ -428,7 +568,7 @@ precompute_mMSEA_static <- function(pathway_ids_vec,
 
 # ------------------------------------------------------------
 # Compute ES given a ranking mapping
-# (Modified: Feature only contributes score on first occurrence)
+# (Final Clean Version: Simple math, but supports aggregated IDs)
 # ------------------------------------------------------------
 compute_ES_from_mapping <- function(static,
                                     weights_by_pos,
@@ -438,10 +578,11 @@ compute_ES_from_mapping <- function(static,
                                     pair_positions_override = NULL,
                                     miss_positions_override = NULL,
                                     miss_variable_id_override = NULL) {
+  
+  # 1. 基础权重提取
   pos <- unname(var2pos[static$vid_pairs])
   wgt <- weights_by_pos[pos]
   
-  # 原始 Pair Weight
   pw   <- static$a_pairs * wgt
   keep <- !is.na(pw) & (pw > 0)
   
@@ -458,7 +599,11 @@ compute_ES_from_mapping <- function(static,
   vhk <- static$vid_pairs[keep]
   idk <- static$id_pairs[keep]
   
-  # 1. 按照权重从大到小排序
+  # [关键修改] 获取我们在 precompute 中打包好的所有 ID 字符串
+  # 如果你用最开始的版本，这一步会缺失
+  all_ids_k <- static$sorted_all_ids[keep]
+  
+  # 2. 排序 (不需要再去重判断了，因为数据已经是 clean 的)
   ord         <- order(pw, decreasing = TRUE)
   top_idx_all <- ord
   
@@ -486,36 +631,17 @@ compute_ES_from_mapping <- function(static,
     return(list(ES = max(ES_cum)))
   }
   
-  # --- [新增/修改逻辑开始] ---
+  top_idx <- top_idx_all[seq_len(n_fill)]
+  top_pw  <- pw[top_idx]
   
-  # 获取排序后的 Feature ID
-  top_idx     <- top_idx_all[seq_len(n_fill)]
-  sorted_vids <- vhk[top_idx]
-  
-  # 识别重复的 Feature (sorted_vids 中第二次及以后出现的标记为 TRUE)
-  is_dup <- duplicated(sorted_vids)
-  
-  # 获取原始排序后的权重
-  top_pw_raw <- pw[top_idx]
-  
-  # 创建"有效权重" (effective weights)
-  # 如果是重复出现的 Feature，将其有效权重设为 0
-  top_pw_effective <- top_pw_raw
-  top_pw_effective[is_dup] <- 0
-  
-  # 计算总 Hit 分数时，只使用有效权重（即去重后的总分）
-  # 这样分母更合理，避免被重复项稀释
-  hit_total <- sum(top_pw_effective)
-  
+  # 计算总分母
+  hit_total <- sum(top_pw)
   if (!is.finite(hit_total) || hit_total <= 0) {
     return(list(ES = NA_real_))
   }
   
-  # 计算步长：使用有效权重计算
-  # 重复的 Feature 这里分子是 0，步长也是 0，曲线会走平路
-  step[pair_pos[seq_len(n_fill)]] <- top_pw_effective / hit_total
-  
-  # --- [新增/修改逻辑结束] ---
+  # 计算步长 (逻辑回归到最简单状态)
+  step[pair_pos[seq_len(n_fill)]] <- top_pw / hit_total
   
   N_miss <- length(miss_pos)
   if (N_miss > 0L) {
@@ -529,27 +655,27 @@ compute_ES_from_mapping <- function(static,
     return(list(ES = ES_val))
   }
   
-  # Leading edge
+  # 3. 构建详细报告 (Leading Edge)
   max_idx <- which.max(ES_cum)
   positions_assigned <- pair_pos[seq_len(n_fill)]
   keep_le <- positions_assigned <= max_idx
   
   leading_edge <- data.frame(
     variable_id    = vhk[top_idx][keep_le],
-    tmp_id         = idk[top_idx][keep_le],
+    primary_id     = idk[top_idx][keep_le],       # 最高分的那个 ID
     
-    # 这里输出 effective weight，这样用户能直观看到重复项的贡献是 0
-    # 如果想保留原始计算权重供参考，可以增加一列 original_weight
-    pair_weight    = top_pw_effective[keep_le], 
-    original_weight = top_pw_raw[keep_le],     # 新增：原始权重供参考
+    # [关键修改] 这里展示所有匹配的 ID，让用户知道这个 Feature 是一对多的
+    all_mapped_ids = all_ids_k[top_idx][keep_le], 
     
+    pair_weight    = top_pw[keep_le],
     a_ij           = static$a_pairs[keep][top_idx][keep_le],
     ranking_weight = wgt[keep][top_idx][keep_le],
-    is_duplicate   = is_dup[keep_le],          # 新增：标记是否因为重复被归零
     stringsAsFactors = FALSE
   )
-  names(leading_edge)[names(leading_edge) == "tmp_id"] <- id_col
+  # 重命名列以便理解
+  names(leading_edge)[names(leading_edge) == "primary_id"] <- id_col
   
+  # 构建 steps 表
   type <- rep("miss", total_slots)
   type[pair_pos] <- "pair_slot"
   
@@ -583,8 +709,6 @@ compute_ES_from_mapping <- function(static,
     steps        = steps
   )
 }
-
-
 
 # ------------------------------------------------------------
 # Main function: mMSEA with C++ permutation back-end
