@@ -6,7 +6,7 @@
 using namespace Rcpp;
 
 // [[Rcpp::export]]
-NumericVector compute_permutations_with_dedup_cpp(
+NumericVector compute_permutations_cpp(
     IntegerVector vid_pairs_idx,     // Feature indices (0-based in C++)
     IntegerVector met_ids_encoded,   // Metabolite IDs (encoded as integers)
     NumericVector a_pairs,           // Annotation scores (after feature-level dedup)

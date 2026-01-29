@@ -11,26 +11,25 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
 // compute_permutations_cpp
-NumericVector compute_permutations_cpp(IntegerVector vid_pairs_idx, NumericVector a_pairs, IntegerVector n_pairs, IntegerVector slot_count, NumericVector base_weights, int V, int n_perm, int seed);
-RcppExport SEXP _featuremsea_compute_permutations_cpp(SEXP vid_pairs_idxSEXP, SEXP a_pairsSEXP, SEXP n_pairsSEXP, SEXP slot_countSEXP, SEXP base_weightsSEXP, SEXP VSEXP, SEXP n_permSEXP, SEXP seedSEXP) {
+NumericVector compute_permutations_cpp(IntegerVector vid_pairs_idx, IntegerVector met_ids_encoded, NumericVector a_pairs, NumericVector base_weights, int V, int n_perm, int seed);
+RcppExport SEXP _featuremsea_compute_permutations_cpp(SEXP vid_pairs_idxSEXP, SEXP met_ids_encodedSEXP, SEXP a_pairsSEXP, SEXP base_weightsSEXP, SEXP VSEXP, SEXP n_permSEXP, SEXP seedSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< IntegerVector >::type vid_pairs_idx(vid_pairs_idxSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type met_ids_encoded(met_ids_encodedSEXP);
     Rcpp::traits::input_parameter< NumericVector >::type a_pairs(a_pairsSEXP);
-    Rcpp::traits::input_parameter< IntegerVector >::type n_pairs(n_pairsSEXP);
-    Rcpp::traits::input_parameter< IntegerVector >::type slot_count(slot_countSEXP);
     Rcpp::traits::input_parameter< NumericVector >::type base_weights(base_weightsSEXP);
     Rcpp::traits::input_parameter< int >::type V(VSEXP);
     Rcpp::traits::input_parameter< int >::type n_perm(n_permSEXP);
     Rcpp::traits::input_parameter< int >::type seed(seedSEXP);
-    rcpp_result_gen = Rcpp::wrap(compute_permutations_cpp(vid_pairs_idx, a_pairs, n_pairs, slot_count, base_weights, V, n_perm, seed));
+    rcpp_result_gen = Rcpp::wrap(compute_permutations_cpp(vid_pairs_idx, met_ids_encoded, a_pairs, base_weights, V, n_perm, seed));
     return rcpp_result_gen;
 END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_featuremsea_compute_permutations_cpp", (DL_FUNC) &_featuremsea_compute_permutations_cpp, 8},
+    {"_featuremsea_compute_permutations_cpp", (DL_FUNC) &_featuremsea_compute_permutations_cpp, 7},
     {NULL, NULL, 0}
 };
 
