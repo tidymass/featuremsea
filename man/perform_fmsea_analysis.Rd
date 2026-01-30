@@ -20,8 +20,8 @@ perform_fmsea_analysis(
 )
 }
 \arguments{
-\item{pathway_database}{A data frame containing pathway information. Must include columns
-`MFM_id`, `MFM_name`, `MFM_description`, and `pathway_class_all`.}
+\item{pathway_database}{An S4 object containing pathway information. Must contain a 
+`database_info` slot with a `source` field indicating the database type.}
 
 \item{annotation_table}{A data frame containing the initial annotation weights.}
 
@@ -46,12 +46,18 @@ perform_fmsea_analysis(
 \item{verbose}{Logical. Whether to print progress messages. Default is `TRUE`.}
 }
 \value{
-A \code{featuremsea_object} containing the analysis results.
+A \code{featuremsea_object} containing the analysis results. 
+  The \code{significant_modules} slot will contain columns: 
+  \code{pathway_id}, \code{pathway_name}, \code{pathway_description}, etc.
 }
 \description{
 This function performs an iterative fMSEA analysis. It iteratively updates the
 weighting of annotations based on the significance of metabolic feature modules (MFMs)
 until convergence or a maximum number of iterations is reached.
+}
+\details{
+It automatically detects the source of the provided pathway database object.
+Valid sources are strictly: "KEGG", "SMPDB", "IMETPD", "Reactome", "Wikipathway".
 }
 \author{
 Xiaotao Shen \email{xiaotao.shen@outlook.com}
