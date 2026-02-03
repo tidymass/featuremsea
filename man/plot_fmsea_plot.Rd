@@ -7,31 +7,17 @@
 plot_fmsea_plot(fmsea_obj, pathway_id, title = NULL)
 }
 \arguments{
-\item{fmsea_obj}{An fMSEA result object. Must contain a `res_list` slot 
-(with detailed step data) and a `significant_modules` slot (with summary statistics).}
+\item{fmsea_obj}{An fMSEA result object.}
 
-\item{pathway_id}{Character. The specific pathway ID to be plotted (e.g., "hsa00140").}
+\item{pathway_id}{Character. The specific pathway ID to be plotted.}
 
-\item{title}{Character. The main title of the plot. If \code{NULL} (default), 
-the pathway name is automatically extracted from the results.}
+\item{title}{Character. The main title of the plot.}
 }
 \value{
-A \code{patchwork} combined \code{ggplot2} object consisting of:
-\itemize{
-  \item \strong{Top:} Running Enrichment Score (ES) curve.
-  \item \strong{Middle:} Barcode plot showing the position of pathway hits.
-  \item \strong{Bottom:} Distribution of the ranking metric/step values.
-}
+A \code{patchwork} combined \code{ggplot2} object.
 }
 \description{
-This function visualizes the Functional Metabolite Set Enrichment Analysis (fMSEA) 
-results using the classic GSEA three-panel plot. It utilizes the pre-calculated 
-`steps` data to ensure the visualization exactly matches the analytical results.
-}
-\examples{
-\dontrun{
-# Assuming 'results' is your fMSEA output object
-p <- plot_fmsea_plot(results, pathway_id = "hsa00140")
-print(p)
-}
+Visualizes fMSEA results.
+Updated visuals: P4, P5, P6 now use stick/segment plots for better clarity of sparse weights.
+Fixed: X-axis alignment across all panels.
 }

@@ -10,6 +10,8 @@ An S4 class to store the results of feature-based MSEA analysis.
 \section{Slots}{
 
 \describe{
+\item{\code{ranking_table}}{A data frame of the original feature rankings.}
+
 \item{\code{feature_metabolite_count}}{A data frame of feature-metabolite counts.}
 
 \item{\code{annotation_table_weighting}}{A data frame of weighted annotations.}

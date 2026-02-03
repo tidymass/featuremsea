@@ -31,7 +31,7 @@
 #' @importFrom dplyr left_join select rename %>%
 #' @export
 perform_fmsea_analysis <- function(
-    pathway_database,               
+    pathway_database,                
     annotation_table,
     ranking_table,
     threads = NULL,
@@ -45,64 +45,39 @@ perform_fmsea_analysis <- function(
     verbose = TRUE
 ) {
   
-  # --- STEP 0: Database Conversion ---
-  if (verbose) message("Checking pathway database source...")
-  
-  # Ensure the object has the required slot
+  # --- Step 1: Database preparation ---
   if (!isS4(pathway_database) || !"database_info" %in% slotNames(pathway_database)) {
     stop("pathway_database must be an S4 object with a 'database_info' slot.")
   }
   
   db_source <- pathway_database@database_info$source
-  
-  if (is.null(db_source)) {
-    stop("Could not determine database source. pathway_database@database_info$source is NULL.")
-  }
-  
-  # Strict validation of source names (Updated HMDB -> SMPDB)
   valid_sources <- c("KEGG", "SMPDB", "IMETPD", "Reactome", "Wikipathway")
   
   if (!db_source %in% valid_sources) {
-    stop(sprintf(
-      "Invalid database source: '%s'.\nAllowed sources are: %s", 
-      db_source, 
-      paste(valid_sources, collapse = ", ")
-    ))
+    stop(sprintf("Invalid database source: '%s'", db_source))
   }
   
-  # Select the correct conversion function
-  # Note: SMPDB source uses convert_hmdb2fmsea
   pathway_df <- switch(db_source,
                        "SMPDB"       = convert_hmdb2fmsea(pathway_database),
                        "KEGG"        = convert_kegg2fmsea(pathway_database),
                        "IMETPD"      = convert_imetpd2fmsea(pathway_database), 
                        "Reactome"    = convert_reactome2fmsea(pathway_database),
-                       "Wikipathway" = convert_wikipathway2fmsea(pathway_database)
-  )
+                       "Wikipathway" = convert_wikipathway2fmsea(pathway_database))
   
-  # --- 修改开始：处理显示名称 ---
-  # 如果内部识别为 SMPDB，则显示名称改为 HMDB；否则保持原样
-  display_source_name <- if (db_source == "SMPDB") "HMDB" else db_source
-  
-  if (verbose) message(sprintf("Successfully converted database from source: %s", display_source_name))
-  # --- 修改结束 ---
-  
-  # INTERNAL RENAMING: 
-  # Rename columns to MFM_* for internal processing compatibility
   pathway_df <- pathway_df %>%
-    dplyr::rename(
-      MFM_id = pathway_id,
-      MFM_name = pathway_name,
-      MFM_description = pathway_description
-    )
+    dplyr::rename(MFM_id = pathway_id, MFM_name = pathway_name, MFM_description = pathway_description)
   
-  # --- END STEP 0 ---
+  # --- Step 2: Weight preparation ---
+  # Store raw ranking table and create absolute-weight table for calculation
+  ranking_table_raw <- ranking_table
+  ranking_table_calc <- ranking_table %>%
+    dplyr::mutate(ranking_weight = abs(ranking_weight))
   
+  # --- Step 3: Iterative enrichment analysis ---
   if (verbose) message("Starting FMSEA iterative analysis...")
   
   score_annotation_table <- annotation_table
   prev_feature_metabolite_count <- NULL
-  
   converged <- FALSE
   iter_used <- 0L
   last_res_list <- NULL
@@ -110,104 +85,58 @@ perform_fmsea_analysis <- function(
   last_feature_metabolite_count <- NULL
   last_significant_mfm <- NULL      
   
-  # Use max.iter.num here
   for (iter in seq_len(max.iter.num)) {
     iter_used <- iter
-    if (verbose) message(sprintf("Iteration %d: computing enrichment with current score annotation...", iter))
     
-    # 1) normalize score annotation
+    # Normalize current weights
     annotation_table_norm <- normalize_score_annotation_global(score_annotation = score_annotation_table)
     
-    # 2) compute results
+    # Run core enrichment using absolute weights
     last_res_list <- parallel_computing_pathways_indexed_fast(
-      pathway_dataset = pathway_df,   # Use the converted internal data frame
+      pathway_dataset = pathway_df,
       annotation_table = annotation_table_norm,
-      ranking_table = ranking_table,
+      ranking_table = ranking_table_calc,
       min_compounds = min.compounds.num, 
       max_compounds = max.compounds.num, 
       id_col = id.col,                    
       n_perm = perm.num,                  
       seed = seed,
-      return_perm = FALSE,
       n_cores = threads,
       verbose = verbose
     )
     
-    # 3) select significant modules
-    last_significant_mfm <- get_significant_mfm(
-      last_res_list,
-      fdr_threshold = fdr.thr 
-    )
+    last_significant_mfm <- get_significant_mfm(last_res_list, fdr_threshold = fdr.thr)
     
-    if (nrow(last_significant_mfm) == 0) {
-      if (verbose) message(sprintf("No significant modules found under the current permutation number and FDR threshold. Stopping iteration."))
-      break
-    }
+    if (nrow(last_significant_mfm) == 0) break
     
-    # 4) count feature–metabolite pairs
-    last_feature_metabolite_count <- get_fm_long_table(
-      last_significant_mfm,
-      last_res_list,
-      id_col = id.col 
-    )
+    # Update weighting based on significant modules
+    last_feature_metabolite_count <- get_fm_long_table(last_significant_mfm, last_res_list, id_col = id.col)
+    last_annotation_table_weighting <- get_weighting_annotation_table_fast(annotation_table, last_feature_metabolite_count)
     
-    # 5) new weighting table
-    last_annotation_table_weighting <- get_weighting_annotation_table_fast(
-      annotation_table,
-      last_feature_metabolite_count
-    )
-    
-    # 6) convergence check
+    # Convergence check
     if (!is.null(prev_feature_metabolite_count) &&
         counts_equal(prev_feature_metabolite_count, last_feature_metabolite_count)) {
       converged <- TRUE
-      if (verbose) message(sprintf("Converged at iteration %d: feature_metabolite_count unchanged.", iter))
       break
     }
     
     prev_feature_metabolite_count <- last_feature_metabolite_count
     score_annotation_table <- last_annotation_table_weighting
-    
-    if (verbose) message(sprintf("Iteration %d complete. Proceeding to the next iteration.", iter))
   }
   
-  if (!converged && verbose) {
-    message(sprintf("Reached the maximum iteration limit (%d) without convergence.", max.iter.num))
-  }
+  # --- Step 4: Formatting and Output ---
+  if (is.null(last_feature_metabolite_count)) last_feature_metabolite_count <- data.frame() 
+  if (is.null(last_annotation_table_weighting)) last_annotation_table_weighting <- data.frame()
+  if (is.null(last_significant_mfm)) last_significant_mfm <- data.frame(MFM_id = character())
   
-  # --- Handle NULLs if loop broke early (No significant modules) ---
-  if (is.null(last_feature_metabolite_count)) {
-    last_feature_metabolite_count <- data.frame() 
-  }
-  
-  if (is.null(last_annotation_table_weighting)) {
-    last_annotation_table_weighting <- data.frame()
-  }
-  
-  if (is.null(last_significant_mfm)) {
-    last_significant_mfm <- data.frame(MFM_id = character())
-  }
-  
-  # --- FINAL OUTPUT FORMATTING ---
-  # Join with pathway info and RENAME back to pathway_*
   significant_modules_final <- last_significant_mfm %>%
-    dplyr::left_join(
-      pathway_df[, c("MFM_id", "MFM_name", "MFM_description", "pathway_class_all")], 
-      by = c("MFM_id" = "MFM_id")
-    ) %>%
-    dplyr::rename(
-      pathway_id = MFM_id,
-      pathway_name = MFM_name,
-      pathway_description = MFM_description
-    ) %>%
-    dplyr::select(
-      pathway_id, pathway_name, pathway_description, pathway_class_all,
-      ES, NES, p_value, FDR
-    )
+    dplyr::left_join(pathway_df[, c("MFM_id", "MFM_name", "MFM_description", "pathway_class_all", "KEGG_ID")], by = "MFM_id") %>%
+    dplyr::rename(pathway_id = MFM_id, pathway_name = MFM_name, pathway_description = MFM_description) %>%
+    dplyr::select(pathway_id, pathway_name, pathway_description, pathway_class_all, KEGG_ID, ES, NES, p_value, FDR)
   
-  # create and return featuremsea_object
   result_object <- new(
     Class = "featuremsea_object",
+    ranking_table              = ranking_table_raw,
     feature_metabolite_count   = last_feature_metabolite_count,
     annotation_table_weighting = last_annotation_table_weighting,
     significant_modules        = significant_modules_final,   
