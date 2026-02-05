@@ -3,9 +3,11 @@
 #' Evaluate the detectability and biological meaningfulness of metabolic pathways
 #' in a given sample matrix (e.g., urine, plasma, feces) using GPT-4.
 #'
-#' @param results Object containing significant_modules slot with pathway information
+#' @param results Object containing significant_modules slot with pathway information,
+#'   or a data.frame with required columns (pathway_id, pathway_name, pathway_description)
 #' @param sample_source Sample matrix type. Options: "urine", "plasma", "serum", "blood", "feces"
-#' @param model OpenAI model to use. Default: "gpt-4.1"
+#' @param api_key OpenAI API key (required)
+#' @param model OpenAI model to use. Default: "gpt-4o"
 #' @param temperature Sampling temperature for model. Default: 0.2
 #' @param max_tokens Maximum tokens in response. Default: 8000
 #'
@@ -26,14 +28,24 @@
 #'   \item 0: Not observable or completely misleading in this matrix
 #' }
 #'
-#' Requires OPENAI_API_KEY environment variable to be set.
-#'
 #' @examples
 #' \dontrun{
-#' Sys.setenv(OPENAI_API_KEY = "your-api-key")
 #' result_df <- analyze_matrix_relevance(
 #'   results = my_results,
-#'   sample_source = "urine"
+#'   sample_source = "urine",
+#'   api_key = "your-api-key"
+#' )
+#'
+#' # Using a data.frame directly
+#' df <- data.frame(
+#'   pathway_id = c("path1", "path2"),
+#'   pathway_name = c("Glycolysis", "TCA Cycle"),
+#'   pathway_description = c("Glucose metabolism", "Central carbon metabolism")
+#' )
+#' result_df <- analyze_matrix_relevance(
+#'   results = df,
+#'   sample_source = "plasma",
+#'   api_key = "your-api-key"
 #' )
 #' }
 #'
@@ -43,14 +55,31 @@
 #' @importFrom tibble as_tibble
 #' @importFrom stringr str_squish
 #' @importFrom glue glue
-#' @importFrom methods slotNames
+#' @importFrom methods slotNames is
 #'
 #' @export
 analyze_matrix_relevance <- function(results,
                                      sample_source,
-                                     model = "gpt-4.1",
+                                     api_key,
+                                     model = "gpt-4o",
                                      temperature = 0.2,
                                      max_tokens = 8000) {
+  
+  # -------- Validate API Key --------
+  if (missing(api_key) || is.null(api_key) || nchar(api_key) == 0) {
+    stop("api_key is required. Please provide a valid OpenAI API key.")
+  }
+  
+  # -------- Input Validation --------
+  valid_sources <- c("urine", "plasma", "serum", "blood", "feces")
+  if (!tolower(sample_source) %in% valid_sources) {
+    warning(
+      "sample_source '", sample_source, "' is not in the standard list: ",
+      paste(valid_sources, collapse = ", "),
+      ". Proceeding anyway."
+    )
+  }
+  sample_source <- tolower(sample_source)
   
   # -------- Internal: Build System Prompt --------
   .build_system_prompt <- function() {
@@ -60,7 +89,6 @@ analyze_matrix_relevance <- function(results,
 Task: For each pathway, assess the likelihood that its small-molecule evidence is detectable and *biologically meaningful* in the given Sample Source (matrix).
 
 Use DISCRETE ANCHORS:
-
 matrix_detectability (0/25/50/75/100):
 - 100: Strong, reliable evidence expected in this matrix.
 - 75: Likely detectable; several expected analytes.
@@ -71,10 +99,8 @@ matrix_detectability (0/25/50/75/100):
 Matrix heuristics (STRICT CONSTRAINTS):
 - Urine: Enriched for small, excreted metabolites.
   * STRICT CONSTRAINT: **Score matrix_detectability strictly as 0** for 'Aminoacyl-tRNA biosynthesis' and 'Amino acid biosynthesis'. Detection in urine implies filtration/leak rather than systemic biosynthesis, making it a misleading marker for this pathway.
-
 - Feces: Microbiome metabolism, SCFAs, bile acids.
   * STRICT CONSTRAINT: **Score matrix_detectability strictly as 0** for 'Lipid biosynthesis' and 'Amino acid metabolism' if the topic implies host physiology. Fecal levels are dominated by microbial activity or diet, rendering them invalid as host pathway readouts.
-
 - Plasma/Serum/Blood: Systemic metabolism, generally high detectability.
 
 Output STRICTLY compact JSON:
@@ -105,17 +131,13 @@ Output STRICTLY compact JSON:
     
     list(
       sample_source = sample_source,
-      pathways      = items
-    ) %>% jsonlite::toJSON(auto_unbox = TRUE, pretty = FALSE)
+      pathways = items
+    ) %>%
+      jsonlite::toJSON(auto_unbox = TRUE, pretty = FALSE)
   }
   
   # -------- Internal: Call OpenAI API --------
-  .call_openai <- function(messages, model, temperature, max_tokens) {
-    api_key <- Sys.getenv("OPENAI_API_KEY", unset = NA)
-    if (is.na(api_key) || nchar(api_key) == 0) {
-      stop("Please set OPENAI_API_KEY in your environment.")
-    }
-    
+  .call_openai <- function(messages, model, temperature, max_tokens, api_key) {
     api_base <- "https://api.openai.com/v1"
     
     req <- httr2::request(paste0(api_base, "/chat/completions")) |>
@@ -131,9 +153,18 @@ Output STRICTLY compact JSON:
       response_format = list(type = "json_object")
     )
     
-    req |>
-      httr2::req_body_json(body) |>
-      httr2::req_perform()
+    resp <- tryCatch(
+      {
+        req |>
+          httr2::req_body_json(body) |>
+          httr2::req_perform()
+      },
+      error = function(e) {
+        stop("OpenAI API request failed: ", conditionMessage(e))
+      }
+    )
+    
+    return(resp)
   }
   
   # -------- Internal: Parse Response and Merge --------
@@ -141,6 +172,7 @@ Output STRICTLY compact JSON:
     out <- tryCatch(jsonlite::fromJSON(txt), error = function(e) NULL)
     
     if (is.null(out) || is.null(out$results)) {
+      warning("Model response could not be parsed as expected JSON.")
       return(
         original_df %>%
           dplyr::mutate(
@@ -175,18 +207,48 @@ Output STRICTLY compact JSON:
       dplyr::mutate(matrix_source = sample_source)
   }
   
+  # -------- Extract Data from Input --------
+  .extract_data <- function(results) {
+    req_cols <- c("pathway_id", "pathway_name", "pathway_description")
+    
+    # Case 1: S4 object with significant_modules slot (use isS4() for detection)
+    if (isS4(results) && "significant_modules" %in% methods::slotNames(results)) {
+      df <- methods::slot(results, "significant_modules")
+      if (!all(req_cols %in% names(df))) {
+        stop("significant_modules must contain columns: ", paste(req_cols, collapse = ", "))
+      }
+      return(df)
+    }
+    
+    # Case 2: Direct data.frame input
+    if (is.data.frame(results)) {
+      if (!all(req_cols %in% names(results))) {
+        stop("Input data.frame must contain columns: ", paste(req_cols, collapse = ", "))
+      }
+      return(results)
+    }
+    
+    # Case 3: List with significant_modules element
+    if (is.list(results) && "significant_modules" %in% names(results)) {
+      df <- results$significant_modules
+      if (!all(req_cols %in% names(df))) {
+        stop("significant_modules must contain columns: ", paste(req_cols, collapse = ", "))
+      }
+      return(df)
+    }
+    
+    stop(
+      "results must be one of:\n",
+      "  1. An S4 object with 'significant_modules' slot\n",
+      "  2. A data.frame with columns: ", paste(req_cols, collapse = ", "), "\n",
+      "  3. A list with 'significant_modules' element"
+    )
+  }
+  
   # -------- Main Logic --------
   
-  # Validate input
-  if (!("significant_modules" %in% methods::slotNames(results))) {
-    stop("results must contain a 'significant_modules' slot.")
-  }
-  significant_modules <- results@significant_modules
-  
-  req_cols <- c("pathway_id", "pathway_name", "pathway_description")
-  if (!all(req_cols %in% names(significant_modules))) {
-    stop("significant_modules must contain columns: ", paste(req_cols, collapse = ", "))
-  }
+  # Extract significant_modules from input
+  significant_modules <- .extract_data(results)
   
   # Prepare data
   df <- significant_modules %>%
@@ -196,6 +258,21 @@ Output STRICTLY compact JSON:
       pathway_name = as.character(pathway_name),
       pathway_description = as.character(pathway_description)
     )
+  
+  # Check if data is empty
+  if (nrow(df) == 0) {
+    warning("No pathways found in input data.")
+    return(
+      significant_modules %>%
+        dplyr::mutate(
+          matrix_relevance_score = NA_integer_,
+          matrix_relevance_reason = "No pathways to analyze.",
+          matrix_source = sample_source
+        )
+    )
+  }
+  
+  message("Analyzing ", nrow(df), " unique pathways for matrix relevance in '", sample_source, "'...")
   
   # Build prompts
   system_prompt <- .build_system_prompt()
@@ -218,16 +295,28 @@ Output STRICTLY compact JSON:
     messages = messages,
     model = model,
     temperature = temperature,
-    max_tokens = max_tokens
+    max_tokens = max_tokens,
+    api_key = api_key
   )
   
   # Parse response
-  resp_json <- tryCatch(httr2::resp_body_json(resp), error = function(e) NULL)
+  resp_json <- tryCatch(
+    httr2::resp_body_json(resp),
+    error = function(e) {
+      warning("Failed to parse API response: ", conditionMessage(e))
+      NULL
+    }
+  )
+  
   content <- if (!is.null(resp_json) && length(resp_json$choices) > 0) {
     resp_json$choices[[1]]$message$content
   } else {
     ""
   }
   
-  .parse_and_merge(content, original_df = significant_modules, sample_source = sample_source)
+  result <- .parse_and_merge(content, original_df = significant_modules, sample_source = sample_source)
+  
+  message("Analysis complete. ", sum(!is.na(result$matrix_relevance_score)), " pathways scored.")
+  
+  return(result)
 }
