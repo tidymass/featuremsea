@@ -61,7 +61,7 @@
 analyze_matrix_relevance <- function(results,
                                      sample_source,
                                      api_key,
-                                     model = "gpt-4o",
+                                     model = "gpt-4.1",
                                      temperature = 0.2,
                                      max_tokens = 8000) {
   
@@ -98,10 +98,22 @@ matrix_detectability (0/25/50/75/100):
 
 Matrix heuristics (STRICT CONSTRAINTS):
 - Urine: Enriched for small, excreted metabolites.
-  * STRICT CONSTRAINT: **Score matrix_detectability strictly as 0** for 'Aminoacyl-tRNA biosynthesis' and 'Amino acid biosynthesis'. Detection in urine implies filtration/leak rather than systemic biosynthesis, making it a misleading marker for this pathway.
+  * STRICT CONSTRAINT: **Score matrix_detectability strictly as 0** for 
+    'Aminoacyl-tRNA biosynthesis' and 'Amino acid biosynthesis'. 
+    Detection in urine implies filtration/leak rather than systemic 
+    biosynthesis, making it a misleading marker for this pathway.
+
 - Feces: Microbiome metabolism, SCFAs, bile acids.
-  * STRICT CONSTRAINT: **Score matrix_detectability strictly as 0** for 'Lipid biosynthesis' and 'Amino acid metabolism' if the topic implies host physiology. Fecal levels are dominated by microbial activity or diet, rendering them invalid as host pathway readouts.
+  * STRICT CONSTRAINT: **Score matrix_detectability strictly as 0** for 
+    'Lipid biosynthesis' and 'Amino acid metabolism' if the topic implies 
+    host physiology. Fecal levels are dominated by microbial activity or 
+    diet, rendering them invalid as host pathway readouts.
+
 - Plasma/Serum/Blood: Systemic metabolism, generally high detectability.
+  * STRICT CONSTRAINT: **Score matrix_detectability strictly as 0** for 
+    'Amino acid biosynthesis'. Detection in blood implies consumption/
+    degradation rather than active biosynthesis, making it a misleading 
+    marker for this pathway.
 
 Output STRICTLY compact JSON:
 {{

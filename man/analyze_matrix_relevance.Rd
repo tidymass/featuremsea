@@ -8,7 +8,7 @@ analyze_matrix_relevance(
   results,
   sample_source,
   api_key,
-  model = "gpt-4o",
+  model = "gpt-4.1",
   temperature = 0.2,
   max_tokens = 8000
 )
