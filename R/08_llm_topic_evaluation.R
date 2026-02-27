@@ -4,19 +4,22 @@
 #' specific research topic (e.g., cancer, pregnancy, diabetes) by querying PubMed.
 #' For each pathway, the function searches PubMed for co-occurrence with the
 #' research topic and returns supporting PMIDs. If no literature is found,
-#' GPT-4 provides a plausible biological explanation for the association.
+#' GPT-4 provides a topic confidence score indicating how likely the pathway
+#' is to be relevant to the given research topic.
 #'
 #' @param results Object containing significant_modules slot with pathway information,
 #'   must be an S4 object with required columns
 #'   (pathway_id, pathway_name, pathway_description) in `significant_modules`.
 #' @param research_topic Character string describing the research topic (e.g., "cancer",
 #'   "pregnancy", "type 2 diabetes", "Parkinson's disease")
-#' @param api_key OpenAI API key (required for biological explanations when no literature found)
+#' @param api_key OpenAI API key (required for topic confidence scoring when no literature found)
 #' @param pubmed_api_key Optional NCBI API key for higher rate limits on PubMed queries.
 #'   Without it, requests are limited to 3/second; with it, 10/second.
-#' @param max_pmids Deprecated and kept for backward compatibility. Fuzzy matching
-#'   PMIDs are always truncated to top 10.
-#' @param model OpenAI model to use for biological explanations. Default: "gpt-4o"
+#' @param max_pmids Deprecated and ignored. Kept for backward compatibility.
+#' @param similarity_cutoff Minimum cosine similarity threshold (0-1) for retaining fuzzy-matched
+#'   PMIDs after embedding re-ranking. Candidates below this threshold are discarded.
+#'   Default: 0.6
+#' @param model OpenAI model to use for topic confidence scoring. Default: "gpt-4.1"
 #' @param temperature Sampling temperature for model. Default: 0.2
 #' @param max_tokens Maximum tokens in response. Default: 8000
 #' @param rate_delay Delay in seconds between PubMed requests to avoid rate limiting.
@@ -25,8 +28,9 @@
 #' @return Updated input S4 object with `significant_modules` augmented by:
 #' \itemize{
 #'   \item \code{literature_pmids_exact}: PMIDs from exact query, separated by \code{{}}
-#'   \item \code{literature_pmids_fuzzy}: PMIDs from fuzzy query, separated by \code{{}} (top 10 only)
-#'   \item \code{biological_explanation}: AI-generated explanation when no literature found, NA otherwise
+#'   \item \code{literature_pmids_fuzzy}: PMIDs from fuzzy search filtered by embedding
+#'     similarity >= \code{similarity_cutoff}, separated by \code{{}}
+#'   \item \code{topic_confidence_score}: Integer score (0/25/50/75/100) when no literature found, NA otherwise
 #'   \item \code{research_topic}: The research topic used for evaluation
 #' }
 #'
@@ -40,7 +44,7 @@
 #' }
 #'
 #' @importFrom httr2 request req_url_query req_headers req_perform req_timeout
-#'   resp_body_json req_auth_bearer_token req_body_json
+#'   resp_body_json resp_body_string req_auth_bearer_token req_body_json
 #' @importFrom jsonlite toJSON fromJSON
 #' @importFrom dplyr mutate transmute select distinct left_join %>% bind_rows filter pull
 #' @importFrom tibble as_tibble tibble
@@ -54,6 +58,7 @@ analyze_literature_relevance <- function(results,
                                          api_key,
                                          pubmed_api_key = NULL,
                                          max_pmids = 10,
+                                         similarity_cutoff = 0.6,
                                          model = "gpt-4.1",
                                          temperature = 0.2,
                                          max_tokens = 8000,
@@ -152,38 +157,198 @@ analyze_literature_relevance <- function(results,
     list(count = length(ids), pmids = ids)
   }
   
-  # -------- Internal: Broader Fallback Search --------
+  # -------- Internal: Broader Fallback Search (100 candidates for re-ranking) --------
   .search_pubmed_broad <- function(pathway_name, research_topic, pubmed_api_key) {
     clean_name <- stringr::str_replace_all(pathway_name, "\\s*\\(.*?\\)\\s*", " ")
     clean_name <- stringr::str_replace_all(clean_name, ",", "")
     clean_name <- stringr::str_squish(clean_name)
-    
+
     terms <- unlist(strsplit(clean_name, "\\s+"))
     terms <- terms[nchar(terms) > 3]
     if (length(terms) > 3) terms <- terms[1:3]
-    if (length(terms) == 0) return(list(count = 0, pmids = character(0)))
-    
+    if (length(terms) == 0) return(list(count = 0L, pmids = character(0)))
+
     broad_query <- glue::glue(
       '({paste(terms, collapse = " AND ")}) AND ("{research_topic}"[Title/Abstract])'
     )
-    out <- .search_pubmed(as.character(broad_query), retmax = 10L, retstart = 0L, pubmed_api_key = pubmed_api_key)
-    out$pmids <- head(out$pmids, 10)
+    out <- .search_pubmed(as.character(broad_query), retmax = 100L, retstart = 0L, pubmed_api_key = pubmed_api_key)
     out$count <- length(out$pmids)
     out
   }
+
+  # -------- Internal: Fetch Title + Abstract via EFetch (MEDLINE format) --------
+  .fetch_pubmed_abstracts <- function(pmids, pubmed_api_key) {
+    if (length(pmids) == 0) {
+      return(tibble::tibble(pmid = character(0), text = character(0)))
+    }
+
+    base_url <- "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+    req <- httr2::request(base_url) |>
+      httr2::req_url_query(
+        db      = "pubmed",
+        id      = paste(pmids, collapse = ","),
+        rettype = "medline",
+        retmode = "text"
+      ) |>
+      httr2::req_timeout(seconds = 60)
+
+    if (!is.null(pubmed_api_key) && nchar(pubmed_api_key) > 0) {
+      req <- req |> httr2::req_url_query(api_key = pubmed_api_key)
+    }
+
+    resp <- tryCatch(
+      httr2::req_perform(req),
+      error = function(e) {
+        warning("EFetch failed: ", conditionMessage(e))
+        return(NULL)
+      }
+    )
+
+    if (is.null(resp)) {
+      return(tibble::tibble(pmid = as.character(pmids),
+                            text = rep(NA_character_, length(pmids))))
+    }
+
+    raw_text <- tryCatch(httr2::resp_body_string(resp), error = function(e) "")
+    lines <- strsplit(raw_text, "\n")[[1]]
+
+    # Parse MEDLINE line-by-line
+    records   <- list()
+    cur_pmid  <- NA_character_
+    cur_ti    <- character(0)
+    cur_ab    <- character(0)
+    cur_field <- ""
+
+    for (line in lines) {
+      if (grepl("^PMID- ", line)) {
+        if (!is.na(cur_pmid)) {
+          records[[cur_pmid]] <- stringr::str_squish(paste(
+            paste(cur_ti, collapse = " "),
+            paste(cur_ab, collapse = " "),
+            sep = ". "
+          ))
+        }
+        cur_pmid  <- trimws(sub("^PMID- ", "", line))
+        cur_ti    <- character(0)
+        cur_ab    <- character(0)
+        cur_field <- ""
+      } else if (grepl("^TI  - ", line)) {
+        cur_field <- "TI"
+        cur_ti    <- c(cur_ti, trimws(sub("^TI  - ", "", line)))
+      } else if (grepl("^AB  - ", line)) {
+        cur_field <- "AB"
+        cur_ab    <- c(cur_ab, trimws(sub("^AB  - ", "", line)))
+      } else if (grepl("^      ", line)) {
+        cont <- trimws(line)
+        if (cur_field == "TI") cur_ti <- c(cur_ti, cont)
+        else if (cur_field == "AB") cur_ab <- c(cur_ab, cont)
+      } else if (grepl("^[A-Z]", line)) {
+        cur_field <- ""
+      }
+    }
+    if (!is.na(cur_pmid)) {
+      records[[cur_pmid]] <- stringr::str_squish(paste(
+        paste(cur_ti, collapse = " "),
+        paste(cur_ab, collapse = " "),
+        sep = ". "
+      ))
+    }
+
+    result_df <- tibble::tibble(
+      pmid = names(records),
+      text = unlist(records)
+    )
+
+    tibble::tibble(pmid = as.character(pmids)) |>
+      dplyr::left_join(result_df, by = "pmid") |>
+      dplyr::mutate(text = ifelse(is.na(text), "", text))
+  }
+
+  # -------- Internal: Get Embeddings via OpenAI --------
+  .get_embeddings <- function(texts, api_key) {
+    texts <- ifelse(is.na(texts) | nchar(trimws(texts)) == 0, ".", texts)
+    texts <- substr(texts, 1, 8000)
+
+    req <- httr2::request("https://api.openai.com/v1/embeddings") |>
+      httr2::req_auth_bearer_token(api_key) |>
+      httr2::req_headers("Content-Type" = "application/json") |>
+      httr2::req_timeout(seconds = 120)
+
+    body <- list(model = "text-embedding-3-small", input = as.list(texts))
+
+    resp <- tryCatch(
+      req |> httr2::req_body_json(body) |> httr2::req_perform(),
+      error = function(e) {
+        warning("OpenAI Embeddings API failed: ", conditionMessage(e))
+        return(NULL)
+      }
+    )
+
+    if (is.null(resp)) return(NULL)
+
+    resp_json <- tryCatch(httr2::resp_body_json(resp), error = function(e) NULL)
+    if (is.null(resp_json) || is.null(resp_json$data)) return(NULL)
+
+    data <- resp_json$data
+    data <- data[order(sapply(data, function(x) x$index))]
+    lapply(data, function(x) unlist(x$embedding))
+  }
+
+  # -------- Internal: Cosine Similarity --------
+  .cosine_similarity <- function(a, b) {
+    if (is.null(a) || is.null(b)) return(0)
+    sum(a * b) / (sqrt(sum(a^2)) * sqrt(sum(b^2)))
+  }
+
+  # -------- Internal: Re-rank Fuzzy Candidates by Embedding Similarity --------
+  .rerank_by_embedding <- function(pmids, pathway_name, pathway_description,
+                                   research_topic, api_key, pubmed_api_key,
+                                   similarity_cutoff) {
+    abstracts <- .fetch_pubmed_abstracts(pmids, pubmed_api_key)
+
+    query_text  <- stringr::str_squish(
+      paste(pathway_name, pathway_description, research_topic, sep = ". ")
+    )
+    texts_to_embed <- c(query_text, abstracts$text)
+
+    embeddings <- .get_embeddings(texts_to_embed, api_key)
+
+    if (is.null(embeddings) || length(embeddings) < 2) {
+      warning("Embedding failed; returning all fuzzy candidates unfiltered.")
+      return(list(pmids = pmids))
+    }
+
+    query_emb    <- embeddings[[1]]
+    abstract_emb <- embeddings[-1]
+
+    sims <- sapply(abstract_emb, function(emb) .cosine_similarity(query_emb, emb))
+    keep <- which(sims >= similarity_cutoff)
+
+    if (length(keep) == 0) return(list(pmids = character(0)))
+
+    keep_ordered <- keep[order(sims[keep], decreasing = TRUE)]
+    list(pmids = abstracts$pmid[keep_ordered])
+  }
   
-  # -------- Internal: Get Biological Explanations via OpenAI --------
-  .get_biological_explanations <- function(pathways_without_lit, research_topic, api_key,
+  # -------- Internal: Get Topic Confidence Scores via OpenAI --------
+  .get_topic_confidence_scores <- function(pathways_without_lit, research_topic, api_key,
                                            model, temperature, max_tokens) {
     if (nrow(pathways_without_lit) == 0) {
-      return(tibble::tibble(pathway_id = character(0), biological_explanation = character(0)))
+      return(tibble::tibble(pathway_id = character(0), topic_confidence_score = integer(0)))
     }
-    
+
     system_prompt <- glue::glue(
       "You are an expert in metabolomics, biochemistry, and molecular biology.
 
-Task: For each metabolic pathway listed below, provide a concise biological explanation
-for why this pathway *might* (or might not) be relevant to the research topic: \"{research_topic}\".
+Task: For each metabolic pathway listed below, score how likely this pathway is to be
+relevant to the research topic: \"{research_topic}\".
+
+Use DISCRETE ANCHORS for topic_confidence_score (0/25/50/75/100):
+- 100: Strong, well-established link between this pathway and the research topic.
+- 75: Likely relevant; credible biochemical or clinical connections exist.
+- 50: Possibly relevant; indirect or context-dependent connections.
+- 25: Unlikely relevant; only weak or speculative connections.
+- 0: No meaningful connection to the research topic.
 
 Consider:
 - Known biochemical links between the pathway and the disease/condition
@@ -191,44 +356,42 @@ Consider:
 - Shared metabolites or cofactors
 - Published hypotheses or emerging evidence
 
-If the pathway is likely irrelevant to the research topic, say so clearly and explain why.
-
 Output STRICTLY compact JSON:
 {{
-  \"explanations\": [
+  \"results\": [
     {{
       \"pathway_id\": string,
-      \"biological_explanation\": string (<= 3 sentences)
+      \"topic_confidence_score\": integer (0/25/50/75/100)
     }},
     ...
   ]
 }}"
     )
-    
+
     pathway_info <- pathways_without_lit %>%
       dplyr::transmute(
         pathway_id = as.character(pathway_id),
         pathway_name = as.character(pathway_name),
         pathway_description = stringr::str_squish(as.character(pathway_description))
       )
-    
+
     user_content <- paste0(
       "Research topic: ", research_topic, "\n",
-      "Provide biological explanations for the following pathways (no PubMed literature found):\n",
+      "Score the topic relevance for the following pathways (no PubMed literature found):\n",
       jsonlite::toJSON(pathway_info, auto_unbox = TRUE, pretty = FALSE)
     )
-    
+
     messages <- list(
       list(role = "system", content = system_prompt),
       list(role = "user", content = user_content)
     )
-    
+
     api_base <- "https://api.openai.com/v1"
     req <- httr2::request(paste0(api_base, "/chat/completions")) |>
       httr2::req_auth_bearer_token(api_key) |>
       httr2::req_headers(`Content-Type` = "application/json") |>
       httr2::req_timeout(seconds = 300)
-    
+
     body <- list(
       model = model,
       temperature = temperature,
@@ -236,7 +399,7 @@ Output STRICTLY compact JSON:
       messages = messages,
       response_format = list(type = "json_object")
     )
-    
+
     resp <- tryCatch(
       req |> httr2::req_body_json(body) |> httr2::req_perform(),
       error = function(e) {
@@ -244,36 +407,39 @@ Output STRICTLY compact JSON:
         return(NULL)
       }
     )
-    
+
     if (is.null(resp)) {
       return(tibble::tibble(
         pathway_id = pathways_without_lit$pathway_id,
-        biological_explanation = rep("Failed to generate explanation (API error).",
-                                     nrow(pathways_without_lit))
+        topic_confidence_score = rep(NA_integer_, nrow(pathways_without_lit))
       ))
     }
-    
+
     resp_json <- tryCatch(httr2::resp_body_json(resp), error = function(e) NULL)
     content <- if (!is.null(resp_json) && length(resp_json$choices) > 0) {
       resp_json$choices[[1]]$message$content
     } else {
       ""
     }
-    
+
     parsed <- tryCatch(jsonlite::fromJSON(content), error = function(e) NULL)
-    
-    if (is.null(parsed) || is.null(parsed$explanations)) {
+
+    if (is.null(parsed) || is.null(parsed$results)) {
       return(tibble::tibble(
         pathway_id = pathways_without_lit$pathway_id,
-        biological_explanation = rep("Failed to parse explanation from model.",
-                                     nrow(pathways_without_lit))
+        topic_confidence_score = rep(NA_integer_, nrow(pathways_without_lit))
       ))
     }
-    
-    tibble::as_tibble(parsed$explanations) %>%
+
+    clamp_to_set <- function(x) {
+      allowed <- c(0L, 25L, 50L, 75L, 100L)
+      ifelse(x %in% allowed, x, NA_integer_)
+    }
+
+    tibble::as_tibble(parsed$results) %>%
       dplyr::transmute(
         pathway_id = as.character(pathway_id),
-        biological_explanation = as.character(biological_explanation)
+        topic_confidence_score = clamp_to_set(suppressWarnings(as.integer(topic_confidence_score)))
       )
   }
   
@@ -293,7 +459,7 @@ Output STRICTLY compact JSON:
       dplyr::mutate(
         literature_pmids_exact = NA_character_,
         literature_pmids_fuzzy = NA_character_,
-        biological_explanation = NA_character_,
+        topic_confidence_score = NA_integer_,
         research_topic = research_topic
       )
     methods::slot(results, "significant_modules") <- updated_modules
@@ -315,14 +481,28 @@ Output STRICTLY compact JSON:
     query <- .build_pubmed_query(pathway_name, research_topic)
     exact_result <- .search_pubmed_exact_all(query, pubmed_api_key)
     
-    # Fuzzy search only when exact search has no hit (top 10 only)
+    # Fuzzy search only when exact search has no hit
     if (length(exact_result$pmids) == 0) {
-      message("    -> No exact-match results. Trying fuzzy search...")
-      fuzzy_result <- .search_pubmed_broad(pathway_name, research_topic, pubmed_api_key)
+      message("    -> No exact-match results. Trying fuzzy search with embedding re-ranking...")
+      candidates <- .search_pubmed_broad(pathway_name, research_topic, pubmed_api_key)
+      if (length(candidates$pmids) > 0) {
+        fuzzy_result <- .rerank_by_embedding(
+          pmids               = candidates$pmids,
+          pathway_name        = pathway_name,
+          pathway_description = df$pathway_description[df$pathway_id == pathway_id],
+          research_topic      = research_topic,
+          api_key             = api_key,
+          pubmed_api_key      = pubmed_api_key,
+          similarity_cutoff   = similarity_cutoff
+        )
+        message("      -> ", length(fuzzy_result$pmids), " PMIDs retained after embedding filter (cutoff=", similarity_cutoff, ")")
+      } else {
+        fuzzy_result <- list(pmids = character(0))
+      }
     } else {
-      fuzzy_result <- list(count = 0L, pmids = character(0))
+      fuzzy_result <- list(pmids = character(0))
     }
-    
+
     # Format PMIDs with {} separator, or NA
     pubmed_results[[pathway_id]] <- tibble::tibble(
       pathway_id = pathway_id,
@@ -332,7 +512,7 @@ Output STRICTLY compact JSON:
         NA_character_
       },
       literature_pmids_fuzzy = if (length(fuzzy_result$pmids) > 0) {
-        paste(head(fuzzy_result$pmids, 10), collapse = "{}")
+        paste(fuzzy_result$pmids, collapse = "{}")
       } else {
         NA_character_
       }
@@ -352,10 +532,10 @@ Output STRICTLY compact JSON:
     dplyr::filter(pathway_id %in% no_literature_ids)
   
   if (nrow(pathways_needing_explanation) > 0) {
-    message("Generating biological explanations for ", nrow(pathways_needing_explanation),
+    message("Scoring topic confidence for ", nrow(pathways_needing_explanation),
             " pathways without literature support...")
-    
-    explanations <- .get_biological_explanations(
+
+    scores <- .get_topic_confidence_scores(
       pathways_without_lit = pathways_needing_explanation,
       research_topic = research_topic,
       api_key = api_key,
@@ -364,26 +544,26 @@ Output STRICTLY compact JSON:
       max_tokens = max_tokens
     )
   } else {
-    explanations <- tibble::tibble(pathway_id = character(0), biological_explanation = character(0))
+    scores <- tibble::tibble(pathway_id = character(0), topic_confidence_score = integer(0))
   }
-  
+
   # -------- Merge Results --------
   updated_modules <- significant_modules %>%
     dplyr::mutate(pathway_id = as.character(pathway_id)) %>%
     dplyr::left_join(pubmed_df, by = "pathway_id") %>%
-    dplyr::left_join(explanations, by = "pathway_id") %>%
+    dplyr::left_join(scores, by = "pathway_id") %>%
     dplyr::mutate(
       research_topic = research_topic,
-      biological_explanation = ifelse(
+      topic_confidence_score = ifelse(
         !is.na(literature_pmids_exact) | !is.na(literature_pmids_fuzzy),
-        NA_character_,
-        biological_explanation
+        NA_integer_,
+        topic_confidence_score
       )
     )
   
   n_with_lit <- sum(!is.na(updated_modules$literature_pmids_exact) | !is.na(updated_modules$literature_pmids_fuzzy))
   n_without <- sum(is.na(updated_modules$literature_pmids_exact) & is.na(updated_modules$literature_pmids_fuzzy))
-  message("Analysis complete. ", n_with_lit, " pathways with literature support, ", n_without, " with biological explanations.")
+  message("Analysis complete. ", n_with_lit, " pathways with literature support, ", n_without, " with topic confidence scores.")
   
   methods::slot(results, "significant_modules") <- updated_modules
   return(results)
