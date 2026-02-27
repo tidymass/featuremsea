@@ -90,7 +90,11 @@ parallel_computing_pathways_indexed_fast <- function(
   }
   
   # ---- Preprocessing shared across all pathways ----
-  annotation_long <- annotation_long_fast_base(annotation_table, id_col = id_col)
+  annotation_long <- annotation_long_fast_base(
+    annotation_table,
+    id_col = id_col,
+    normalize_global = TRUE
+  )
   
   base_rk <- ranking_table %>%
     dplyr::distinct(variable_id, ranking_weight) %>%

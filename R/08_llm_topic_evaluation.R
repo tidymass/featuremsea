@@ -7,43 +7,34 @@
 #' GPT-4 provides a plausible biological explanation for the association.
 #'
 #' @param results Object containing significant_modules slot with pathway information,
-#'   or a data.frame with required columns (pathway_id, pathway_name, pathway_description)
+#'   must be an S4 object with required columns
+#'   (pathway_id, pathway_name, pathway_description) in `significant_modules`.
 #' @param research_topic Character string describing the research topic (e.g., "cancer",
 #'   "pregnancy", "type 2 diabetes", "Parkinson's disease")
 #' @param api_key OpenAI API key (required for biological explanations when no literature found)
 #' @param pubmed_api_key Optional NCBI API key for higher rate limits on PubMed queries.
 #'   Without it, requests are limited to 3/second; with it, 10/second.
-#' @param max_pmids Maximum number of PMIDs to return per pathway. Default: 10
+#' @param max_pmids Deprecated and kept for backward compatibility. Fuzzy matching
+#'   PMIDs are always truncated to top 10.
 #' @param model OpenAI model to use for biological explanations. Default: "gpt-4o"
 #' @param temperature Sampling temperature for model. Default: 0.2
 #' @param max_tokens Maximum tokens in response. Default: 8000
 #' @param rate_delay Delay in seconds between PubMed requests to avoid rate limiting.
 #'   Default: 0.35
 #'
-#' @return A data frame based on significant_modules with three additional columns:
+#' @return Updated input S4 object with `significant_modules` augmented by:
 #' \itemize{
-#'   \item \code{literature_pmids}: PMIDs separated by \code{{}} (e.g., "12345{}67890"), or NA if none found
+#'   \item \code{literature_pmids_exact}: PMIDs from exact query, separated by \code{{}}
+#'   \item \code{literature_pmids_fuzzy}: PMIDs from fuzzy query, separated by \code{{}} (top 10 only)
 #'   \item \code{biological_explanation}: AI-generated explanation when no literature found, NA otherwise
 #'   \item \code{research_topic}: The research topic used for evaluation
 #' }
 #'
 #' @examples
 #' \dontrun{
-#' result_df <- analyze_literature_relevance(
+#' result_obj <- analyze_literature_relevance(
 #'   results = my_results,
 #'   research_topic = "breast cancer",
-#'   api_key = "your-openai-api-key"
-#' )
-#'
-#' # Using a data.frame directly
-#' df <- data.frame(
-#'   pathway_id = c("hsa00010", "hsa00020"),
-#'   pathway_name = c("Glycolysis / Gluconeogenesis", "Citrate cycle (TCA cycle)"),
-#'   pathway_description = c("Glucose metabolism pathway", "Central carbon metabolism")
-#' )
-#' result_df <- analyze_literature_relevance(
-#'   results = df,
-#'   research_topic = "colorectal cancer",
 #'   api_key = "your-openai-api-key"
 #' )
 #' }
@@ -55,7 +46,7 @@
 #' @importFrom tibble as_tibble tibble
 #' @importFrom stringr str_squish str_replace_all
 #' @importFrom glue glue
-#' @importFrom methods slotNames
+#' @importFrom methods slotNames is
 #'
 #' @export
 analyze_literature_relevance <- function(results,
@@ -77,39 +68,17 @@ analyze_literature_relevance <- function(results,
   }
   research_topic <- trimws(research_topic)
   
-  # -------- Extract Data from Input --------
-  .extract_data <- function(results) {
-    req_cols <- c("pathway_id", "pathway_name", "pathway_description")
-    
-    if (isS4(results) && "significant_modules" %in% methods::slotNames(results)) {
-      df <- methods::slot(results, "significant_modules")
-      if (!all(req_cols %in% names(df))) {
-        stop("significant_modules must contain columns: ", paste(req_cols, collapse = ", "))
-      }
-      return(df)
-    }
-    
-    if (is.data.frame(results)) {
-      if (!all(req_cols %in% names(results))) {
-        stop("Input data.frame must contain columns: ", paste(req_cols, collapse = ", "))
-      }
-      return(results)
-    }
-    
-    if (is.list(results) && "significant_modules" %in% names(results)) {
-      df <- results$significant_modules
-      if (!all(req_cols %in% names(df))) {
-        stop("significant_modules must contain columns: ", paste(req_cols, collapse = ", "))
-      }
-      return(df)
-    }
-    
+  # -------- Validate results is S4 with significant_modules --------
+  if (!isS4(results) || !"significant_modules" %in% methods::slotNames(results)) {
     stop(
-      "results must be one of:\n",
-      "  1. An S4 object with 'significant_modules' slot\n",
-      "  2. A data.frame with columns: ", paste(req_cols, collapse = ", "), "\n",
-      "  3. A list with 'significant_modules' element"
+      "results must be an S4 object with a 'significant_modules' slot."
     )
+  }
+  
+  req_cols <- c("pathway_id", "pathway_name", "pathway_description")
+  significant_modules <- methods::slot(results, "significant_modules")
+  if (!all(req_cols %in% names(significant_modules))) {
+    stop("significant_modules must contain columns: ", paste(req_cols, collapse = ", "))
   }
   
   # -------- Internal: Build PubMed Search Query --------
@@ -123,14 +92,15 @@ analyze_literature_relevance <- function(results,
   }
   
   # -------- Internal: Search PubMed via E-utilities --------
-  .search_pubmed <- function(query, max_pmids, pubmed_api_key) {
+  .search_pubmed <- function(query, retmax, retstart = 0L, pubmed_api_key) {
     base_url <- "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
     
     req <- httr2::request(base_url) |>
       httr2::req_url_query(
         db = "pubmed",
         term = query,
-        retmax = max_pmids,
+        retmax = as.integer(retmax),
+        retstart = as.integer(retstart),
         retmode = "json",
         sort = "relevance"
       ) |>
@@ -148,12 +118,12 @@ analyze_literature_relevance <- function(results,
       }
     )
     
-    if (is.null(resp)) return(list(count = 0, pmids = character(0)))
+    if (is.null(resp)) return(list(count = 0L, pmids = character(0)))
     
     body <- tryCatch(httr2::resp_body_json(resp), error = function(e) NULL)
     
     if (is.null(body) || is.null(body$esearchresult)) {
-      return(list(count = 0, pmids = character(0)))
+      return(list(count = 0L, pmids = character(0)))
     }
     
     count <- as.integer(body$esearchresult$count %||% 0)
@@ -162,8 +132,28 @@ analyze_literature_relevance <- function(results,
     return(list(count = count, pmids = as.character(pmids)))
   }
   
+  # -------- Internal: Exact Search (retrieve all PMIDs with pagination) --------
+  .search_pubmed_exact_all <- function(query, pubmed_api_key, page_size = 10000L) {
+    first <- .search_pubmed(query = query, retmax = 0L, retstart = 0L, pubmed_api_key = pubmed_api_key)
+    total <- as.integer(first$count %||% 0L)
+    if (!is.finite(total) || total <= 0L) {
+      return(list(count = 0L, pmids = character(0)))
+    }
+    
+    ids <- character(0)
+    starts <- seq.int(0L, total - 1L, by = as.integer(page_size))
+    for (st in starts) {
+      take_n <- min(as.integer(page_size), total - st)
+      chunk <- .search_pubmed(query = query, retmax = take_n, retstart = st, pubmed_api_key = pubmed_api_key)
+      ids <- c(ids, chunk$pmids)
+    }
+    
+    ids <- unique(as.character(ids))
+    list(count = length(ids), pmids = ids)
+  }
+  
   # -------- Internal: Broader Fallback Search --------
-  .search_pubmed_broad <- function(pathway_name, research_topic, max_pmids, pubmed_api_key) {
+  .search_pubmed_broad <- function(pathway_name, research_topic, pubmed_api_key) {
     clean_name <- stringr::str_replace_all(pathway_name, "\\s*\\(.*?\\)\\s*", " ")
     clean_name <- stringr::str_replace_all(clean_name, ",", "")
     clean_name <- stringr::str_squish(clean_name)
@@ -176,7 +166,10 @@ analyze_literature_relevance <- function(results,
     broad_query <- glue::glue(
       '({paste(terms, collapse = " AND ")}) AND ("{research_topic}"[Title/Abstract])'
     )
-    .search_pubmed(as.character(broad_query), max_pmids, pubmed_api_key)
+    out <- .search_pubmed(as.character(broad_query), retmax = 10L, retstart = 0L, pubmed_api_key = pubmed_api_key)
+    out$pmids <- head(out$pmids, 10)
+    out$count <- length(out$pmids)
+    out
   }
   
   # -------- Internal: Get Biological Explanations via OpenAI --------
@@ -286,8 +279,6 @@ Output STRICTLY compact JSON:
   
   # -------- Main Logic --------
   
-  significant_modules <- .extract_data(results)
-  
   df <- significant_modules %>%
     dplyr::distinct(pathway_id, .keep_all = TRUE) %>%
     dplyr::mutate(
@@ -298,14 +289,15 @@ Output STRICTLY compact JSON:
   
   if (nrow(df) == 0) {
     warning("No pathways found in input data.")
-    return(
-      significant_modules %>%
-        dplyr::mutate(
-          literature_pmids = NA_character_,
-          biological_explanation = NA_character_,
-          research_topic = research_topic
-        )
-    )
+    updated_modules <- significant_modules %>%
+      dplyr::mutate(
+        literature_pmids_exact = NA_character_,
+        literature_pmids_fuzzy = NA_character_,
+        biological_explanation = NA_character_,
+        research_topic = research_topic
+      )
+    methods::slot(results, "significant_modules") <- updated_modules
+    return(results)
   }
   
   message("Searching PubMed for ", nrow(df), " pathways related to '", research_topic, "'...")
@@ -319,21 +311,28 @@ Output STRICTLY compact JSON:
     
     message("  [", i, "/", nrow(df), "] Searching: ", pathway_name)
     
-    # Primary search
+    # Exact search (keep all matched PMIDs)
     query <- .build_pubmed_query(pathway_name, research_topic)
-    search_result <- .search_pubmed(query, max_pmids, pubmed_api_key)
+    exact_result <- .search_pubmed_exact_all(query, pubmed_api_key)
     
-    # Fallback broader search
-    if (search_result$count == 0) {
-      message("    -> No results. Trying broader search...")
-      search_result <- .search_pubmed_broad(pathway_name, research_topic, max_pmids, pubmed_api_key)
+    # Fuzzy search only when exact search has no hit (top 10 only)
+    if (length(exact_result$pmids) == 0) {
+      message("    -> No exact-match results. Trying fuzzy search...")
+      fuzzy_result <- .search_pubmed_broad(pathway_name, research_topic, pubmed_api_key)
+    } else {
+      fuzzy_result <- list(count = 0L, pmids = character(0))
     }
     
     # Format PMIDs with {} separator, or NA
     pubmed_results[[pathway_id]] <- tibble::tibble(
       pathway_id = pathway_id,
-      literature_pmids = if (length(search_result$pmids) > 0) {
-        paste(search_result$pmids, collapse = "{}")
+      literature_pmids_exact = if (length(exact_result$pmids) > 0) {
+        paste(exact_result$pmids, collapse = "{}")
+      } else {
+        NA_character_
+      },
+      literature_pmids_fuzzy = if (length(fuzzy_result$pmids) > 0) {
+        paste(head(fuzzy_result$pmids, 10), collapse = "{}")
       } else {
         NA_character_
       }
@@ -346,7 +345,7 @@ Output STRICTLY compact JSON:
   
   # -------- Biological Explanations for Pathways Without Literature --------
   no_literature_ids <- pubmed_df %>%
-    dplyr::filter(is.na(literature_pmids)) %>%
+    dplyr::filter(is.na(literature_pmids_exact) & is.na(literature_pmids_fuzzy)) %>%
     dplyr::pull(pathway_id)
   
   pathways_needing_explanation <- df %>%
@@ -369,19 +368,23 @@ Output STRICTLY compact JSON:
   }
   
   # -------- Merge Results --------
-  final <- significant_modules %>%
+  updated_modules <- significant_modules %>%
     dplyr::mutate(pathway_id = as.character(pathway_id)) %>%
     dplyr::left_join(pubmed_df, by = "pathway_id") %>%
     dplyr::left_join(explanations, by = "pathway_id") %>%
     dplyr::mutate(
       research_topic = research_topic,
-      biological_explanation = ifelse(!is.na(literature_pmids), NA_character_, biological_explanation)
+      biological_explanation = ifelse(
+        !is.na(literature_pmids_exact) | !is.na(literature_pmids_fuzzy),
+        NA_character_,
+        biological_explanation
+      )
     )
   
-  n_with_lit <- sum(!is.na(final$literature_pmids))
-  n_without <- sum(is.na(final$literature_pmids))
-  message("Analysis complete. ", n_with_lit, " pathways with literature support, ",
-          n_without, " with biological explanations.")
+  n_with_lit <- sum(!is.na(updated_modules$literature_pmids_exact) | !is.na(updated_modules$literature_pmids_fuzzy))
+  n_without <- sum(is.na(updated_modules$literature_pmids_exact) & is.na(updated_modules$literature_pmids_fuzzy))
+  message("Analysis complete. ", n_with_lit, " pathways with literature support, ", n_without, " with biological explanations.")
   
-  return(final)
+  methods::slot(results, "significant_modules") <- updated_modules
+  return(results)
 }

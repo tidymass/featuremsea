@@ -60,9 +60,9 @@ get_significant_mfm <- function(res_list, fdr_threshold = 0.05) {
 #' @param significant_mfm Data frame from get_significant_mfm.
 #' @param res_list Original result list.
 #' @noRd
-get_fm_long_table <- function(significant_mfm, res_list, id_col) {
+get_fm_long_table <- function(significant_mfm, res_list, id_col, fdr_threshold = 0.05) {
   selected_ids <- significant_mfm %>%
-    filter(!is.na(FDR), FDR < 0.05) %>%
+    filter(!is.na(FDR), FDR < fdr_threshold) %>%
     pull(MFM_id)
   
   leading_edge_df <- map_dfr(
@@ -94,45 +94,72 @@ get_fm_long_table <- function(significant_mfm, res_list, id_col) {
 #' @param feature_metabolite_count Data frame with counts.
 #' @noRd
 get_weighting_annotation_table_fast <- function(original_annotation_table,
-                                                feature_metabolite_count) {
+                                                feature_metabolite_count,
+                                                id_col = "KEGG_ID") {
   # --- Step 0: Data Preparation ---
-  orig_df <- as.data.frame(original_annotation_table)
-  orig_mat <- as.matrix(orig_df)
-  storage.mode(orig_mat) <- "double"
+  weighted_df <- as.data.frame(original_annotation_table, stringsAsFactors = FALSE)
+  n_row <- nrow(weighted_df)
+  n_col <- ncol(weighted_df)
   
-  # --- Step 1: Vectorized construction of the counts matrix ---
-  counts_mat <- matrix(0, nrow = nrow(orig_mat), ncol = ncol(orig_mat),
-                       dimnames = dimnames(orig_mat))
+  # --- Step 1: Row-wise max score (streaming over columns, no dense copy) ---
+  max_score_row <- rep(-Inf, n_row)
+  for (j in seq_len(n_col)) {
+    col_j <- weighted_df[[j]]
+    if (!is.numeric(col_j)) {
+      col_j <- suppressWarnings(as.numeric(col_j))
+    }
+    col_for_max <- col_j
+    col_for_max[is.na(col_for_max)] <- -Inf
+    max_score_row <- pmax(max_score_row, col_for_max)
+    weighted_df[[j]] <- col_j
+  }
+  max_score_row[!is.finite(max_score_row)] <- 0
   
-  if (!is.null(feature_metabolite_count) && nrow(feature_metabolite_count) > 0) {
-    row_indices <- match(feature_metabolite_count$variable_id, rownames(orig_mat))
-    col_indices <- match(feature_metabolite_count$KEGG_ID, colnames(orig_mat))
-    
-    valid_indices <- !is.na(row_indices) & !is.na(col_indices)
-    index_mat <- cbind(row_indices[valid_indices], col_indices[valid_indices])
-    
-    counts_mat[index_mat] <- feature_metabolite_count$count[valid_indices]
+  # Early return if no updates are needed
+  if (is.null(feature_metabolite_count) || nrow(feature_metabolite_count) == 0) {
+    return(weighted_df)
   }
   
-  # --- Step 2: High-performance calculation of row statistics ---
-  total_count_row <- rowSums(counts_mat, na.rm = TRUE)
+  if (!id_col %in% colnames(feature_metabolite_count)) {
+    stop("feature_metabolite_count must contain id column: ", id_col)
+  }
   
-  # Ensure matrixStats is in Imports
-  max_score_row <- matrixStats::rowMaxs(orig_mat, na.rm = TRUE)
-  max_score_row[is.infinite(max_score_row)] <- 0
+  # --- Step 2: Sparse index matching ---
+  row_indices <- match(feature_metabolite_count$variable_id, rownames(weighted_df))
+  col_indices <- match(feature_metabolite_count[[id_col]], colnames(weighted_df))
+  counts_vec <- as.numeric(feature_metabolite_count$count)
   
-  # --- Steps 3, 4, 5: Calculation ---
+  valid <- !is.na(row_indices) & !is.na(col_indices) & is.finite(counts_vec) & counts_vec > 0
+  if (!any(valid)) {
+    return(weighted_df)
+  }
+  
+  row_indices <- row_indices[valid]
+  col_indices <- col_indices[valid]
+  counts_vec <- counts_vec[valid]
+  
+  # --- Step 3: Row-wise total count for normalization ---
+  total_count_row <- numeric(n_row)
+  row_sum_tbl <- rowsum(counts_vec, group = row_indices, reorder = FALSE)
+  total_count_row[as.integer(rownames(row_sum_tbl))] <- as.numeric(row_sum_tbl[, 1])
   denom <- ifelse(total_count_row == 0, 1, total_count_row)
-  prop_mat <- sweep(counts_mat, 1, denom, "/")
   
-  bonus_mat <- sweep(prop_mat, 1, max_score_row, "*")
-  bonus_mat[counts_mat == 0] <- 0
+  # --- Step 4: Compute sparse bonuses for hit cells only ---
+  bonus_vec <- counts_vec / denom[row_indices] * max_score_row[row_indices]
   
-  weighted_mat <- orig_mat + bonus_mat
+  # --- Step 5: Apply sparse updates grouped by column ---
+  split_idx <- split(seq_along(col_indices), col_indices)
+  for (col_key in names(split_idx)) {
+    idx <- split_idx[[col_key]]
+    cj <- as.integer(col_key)
+    rows <- row_indices[idx]
+    addv <- bonus_vec[idx]
+    col_j <- weighted_df[[cj]]
+    col_j[rows] <- col_j[rows] + addv
+    weighted_df[[cj]] <- col_j
+  }
   
-  # --- Step 6: Return result ---
-  weighted_df <- as.data.frame(weighted_mat, stringsAsFactors = FALSE)
-  return(weighted_df)
+  weighted_df
 }
 
 #' Calculate Pearson score between two tables
@@ -149,33 +176,36 @@ get_pearson_score <- function(annotation_table1, annotation_table2) {
 #' Canonicalize counts dataframe
 #' Helper for equality check
 #' @noRd
-canon_counts <- function(df) {
+canon_counts <- function(df, id_col = "KEGG_ID") {
   if (is.null(df) || nrow(df) == 0) {
-    return(data.frame(
+    out <- data.frame(
       variable_id = character(0),
-      KEGG_ID     = character(0),
       count       = numeric(0),
       stringsAsFactors = FALSE
-    ))
+    )
+    out[[id_col]] <- character(0)
+    out <- out[, c("variable_id", id_col, "count"), drop = FALSE]
+    return(out)
   }
   
-  cols <- intersect(c("variable_id", "KEGG_ID", "count"), colnames(df))
+  cols <- intersect(c("variable_id", id_col, "count"), colnames(df))
   out <- df[, cols, drop = FALSE]
   if (!"variable_id" %in% colnames(out)) out$variable_id <- NA_character_
-  if (!"KEGG_ID"     %in% colnames(out)) out$KEGG_ID     <- NA_character_
+  if (!id_col %in% colnames(out)) out[[id_col]] <- NA_character_
   if (!"count"       %in% colnames(out)) out$count       <- NA_real_
   
   out$variable_id <- as.character(out$variable_id)
-  out$KEGG_ID     <- as.character(out$KEGG_ID)
+  out[[id_col]]   <- as.character(out[[id_col]])
   out$count       <- as.numeric(out$count)
   
-  out <- out[order(out$variable_id, out$KEGG_ID, out$count), , drop = FALSE]
+  out <- out[, c("variable_id", id_col, "count"), drop = FALSE]
+  out <- out[order(out$variable_id, out[[id_col]], out$count), , drop = FALSE]
   rownames(out) <- NULL
   out
 }
 
 #' Check if counts are equal
 #' @noRd
-counts_equal <- function(a, b) {
-  identical(canon_counts(a), canon_counts(b))
+counts_equal <- function(a, b, id_col = "KEGG_ID") {
+  identical(canon_counts(a, id_col = id_col), canon_counts(b, id_col = id_col))
 }

@@ -88,13 +88,12 @@ perform_fmsea_analysis <- function(
   for (iter in seq_len(max.iter.num)) {
     iter_used <- iter
     
-    # Normalize current weights
-    annotation_table_norm <- normalize_score_annotation_global(score_annotation = score_annotation_table)
-    
-    # Run core enrichment using absolute weights
+    # Run core enrichment using absolute weights.
+    # Global normalization is applied inside annotation_long_fast_base()
+    # to avoid materializing another full-size matrix in memory.
     last_res_list <- parallel_computing_pathways_indexed_fast(
       pathway_dataset = pathway_df,
-      annotation_table = annotation_table_norm,
+      annotation_table = score_annotation_table,
       ranking_table = ranking_table_calc,
       min_compounds = min.compounds.num, 
       max_compounds = max.compounds.num, 
@@ -110,12 +109,21 @@ perform_fmsea_analysis <- function(
     if (nrow(last_significant_mfm) == 0) break
     
     # Update weighting based on significant modules
-    last_feature_metabolite_count <- get_fm_long_table(last_significant_mfm, last_res_list, id_col = id.col)
-    last_annotation_table_weighting <- get_weighting_annotation_table_fast(annotation_table, last_feature_metabolite_count)
+    last_feature_metabolite_count <- get_fm_long_table(
+      last_significant_mfm,
+      last_res_list,
+      id_col = id.col,
+      fdr_threshold = fdr.thr
+    )
+    last_annotation_table_weighting <- get_weighting_annotation_table_fast(
+      annotation_table,
+      last_feature_metabolite_count,
+      id_col = id.col
+    )
     
     # Convergence check
     if (!is.null(prev_feature_metabolite_count) &&
-        counts_equal(prev_feature_metabolite_count, last_feature_metabolite_count)) {
+        counts_equal(prev_feature_metabolite_count, last_feature_metabolite_count, id_col = id.col)) {
       converged <- TRUE
       break
     }
@@ -129,10 +137,16 @@ perform_fmsea_analysis <- function(
   if (is.null(last_annotation_table_weighting)) last_annotation_table_weighting <- data.frame()
   if (is.null(last_significant_mfm)) last_significant_mfm <- data.frame(MFM_id = character())
   
+  pathway_cols <- c("MFM_id", "MFM_name", "MFM_description", "pathway_class_all")
+  if (id.col %in% colnames(pathway_df)) {
+    pathway_cols <- c(pathway_cols, id.col)
+  }
+  
   significant_modules_final <- last_significant_mfm %>%
-    dplyr::left_join(pathway_df[, c("MFM_id", "MFM_name", "MFM_description", "pathway_class_all", "KEGG_ID")], by = "MFM_id") %>%
+    dplyr::left_join(pathway_df[, pathway_cols], by = "MFM_id") %>%
     dplyr::rename(pathway_id = MFM_id, pathway_name = MFM_name, pathway_description = MFM_description) %>%
-    dplyr::select(pathway_id, pathway_name, pathway_description, pathway_class_all, KEGG_ID, ES, NES, p_value, FDR)
+    dplyr::select(dplyr::all_of(pathway_cols[pathway_cols != "MFM_id" & pathway_cols != "MFM_name" & pathway_cols != "MFM_description"]), ES, NES, p_value, FDR, pathway_id, pathway_name, pathway_description) %>%
+    dplyr::select(pathway_id, pathway_name, pathway_description, dplyr::everything())
   
   result_object <- new(
     Class = "featuremsea_object",

@@ -39,26 +39,15 @@ normalize_score_annotation_global <- function(score_annotation) {
 # ------------------------------------------------------------
 # Convert annotation matrix to long format
 # ------------------------------------------------------------
-annotation_long_fast_base <- function(annotation_table, id_col = "KEGG_ID") {
+annotation_long_fast_base <- function(annotation_table, id_col = "KEGG_ID", normalize_global = FALSE) {
   rn <- rownames(annotation_table)
   cn <- colnames(annotation_table)
 
   if (is.null(rn) || is.null(cn)) {
     stop("annotation_table must have both row and column names")
   }
-
-  m <- as.matrix(annotation_table)
-  storage.mode(m) <- "double"
-
-  rs_keep <- rowSums(m > 0, na.rm = TRUE) > 0
-  cs_keep <- colSums(m > 0, na.rm = TRUE) > 0
-
-  m  <- m[rs_keep, cs_keep, drop = FALSE]
-  rn <- rn[rs_keep]
-  cn <- cn[cs_keep]
-
-  idx <- which(m > 0, arr.ind = TRUE)
-  if (nrow(idx) == 0L) {
+  
+  empty_out <- function() {
     out <- data.frame(
       variable_id = character(),
       tmp         = character(),
@@ -66,15 +55,111 @@ annotation_long_fast_base <- function(annotation_table, id_col = "KEGG_ID") {
       stringsAsFactors = FALSE
     )
     names(out)[2] <- id_col
+    out
+  }
+  
+  .norm_denom <- function(max_val) {
+    if (!is.finite(max_val) || max_val == 0) 1 else max_val
+  }
+  
+  # Sparse matrix path: avoid materializing dense intermediates.
+  if (inherits(annotation_table, "sparseMatrix")) {
+    sm <- Matrix::summary(annotation_table)
+    keep <- is.finite(sm$x) & (sm$x > 0)
+    sm <- sm[keep, , drop = FALSE]
+    if (nrow(sm) == 0L) {
+      return(empty_out())
+    }
+    if (normalize_global) {
+      denom <- .norm_denom(max(sm$x, na.rm = TRUE))
+      sm$x <- sm$x / denom
+    }
+    out <- data.frame(
+      variable_id = rn[sm$i],
+      tmp         = cn[sm$j],
+      a_ij        = sm$x,
+      stringsAsFactors = FALSE
+    )
+    names(out)[2] <- id_col
     return(out)
   }
-
-  out <- data.frame(
-    variable_id = rn[idx[, 1]],
-    tmp         = cn[idx[, 2]],
-    a_ij        = m[idx],
-    stringsAsFactors = FALSE
-  )
+  
+  # data.frame path: scan per column to avoid a second huge dense copy.
+  if (is.data.frame(annotation_table)) {
+    global_max <- -Inf
+    parts <- vector("list", length(cn))
+    for (j in seq_along(cn)) {
+      col_j <- annotation_table[[j]]
+      if (!is.numeric(col_j)) {
+        col_j <- suppressWarnings(as.numeric(col_j))
+      }
+      if (normalize_global) {
+        local_max <- suppressWarnings(max(col_j, na.rm = TRUE))
+        if (is.finite(local_max) && local_max > global_max) {
+          global_max <- local_max
+        }
+      }
+      keep <- which(!is.na(col_j) & (col_j > 0))
+      if (length(keep) == 0L) {
+        next
+      }
+      parts[[j]] <- data.frame(
+        variable_id = rn[keep],
+        tmp         = cn[j],
+        a_ij        = col_j[keep],
+        stringsAsFactors = FALSE
+      )
+    }
+    parts <- parts[!vapply(parts, is.null, logical(1))]
+    if (length(parts) == 0L) {
+      return(empty_out())
+    }
+    out <- data.table::rbindlist(parts, use.names = TRUE)
+    if (normalize_global) {
+      denom <- .norm_denom(global_max)
+      out[["a_ij"]] <- out[["a_ij"]] / denom
+    }
+    out <- as.data.frame(out, stringsAsFactors = FALSE)
+    names(out)[2] <- id_col
+    return(out)
+  }
+  
+  # Matrix path: scan per column to avoid allocating a full logical matrix.
+  m <- if (is.matrix(annotation_table)) annotation_table else as.matrix(annotation_table)
+  storage.mode(m) <- "double"
+  
+  global_max <- -Inf
+  parts <- vector("list", ncol(m))
+  for (j in seq_len(ncol(m))) {
+    col_j <- m[, j]
+    if (normalize_global) {
+      local_max <- suppressWarnings(max(col_j, na.rm = TRUE))
+      if (is.finite(local_max) && local_max > global_max) {
+        global_max <- local_max
+      }
+    }
+    keep <- which(!is.na(col_j) & (col_j > 0))
+    if (length(keep) == 0L) {
+      next
+    }
+    parts[[j]] <- data.frame(
+      variable_id = rn[keep],
+      tmp         = cn[j],
+      a_ij        = col_j[keep],
+      stringsAsFactors = FALSE
+    )
+  }
+  
+  parts <- parts[!vapply(parts, is.null, logical(1))]
+  if (length(parts) == 0L) {
+    return(empty_out())
+  }
+  out <- data.table::rbindlist(parts, use.names = TRUE)
+  if (normalize_global) {
+    denom <- .norm_denom(global_max)
+    out[["a_ij"]] <- out[["a_ij"]] / denom
+  }
+  out <- as.data.frame(out, stringsAsFactors = FALSE)
   names(out)[2] <- id_col
   out
 }

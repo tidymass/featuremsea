@@ -81,13 +81,25 @@ analyze_matrix_relevance <- function(results,
   }
   sample_source <- tolower(sample_source)
   
+  # -------- Validate results is S4 with significant_modules --------
+  if (!isS4(results) || !"significant_modules" %in% methods::slotNames(results)) {
+    stop(
+      "results must be an S4 object with a 'significant_modules' slot. ",
+      "If you have a data.frame, wrap it in the appropriate S4 object first."
+    )
+  }
+  
+  req_cols <- c("pathway_id", "pathway_name", "pathway_description")
+  significant_modules <- methods::slot(results, "significant_modules")
+  if (!all(req_cols %in% names(significant_modules))) {
+    stop("significant_modules must contain columns: ", paste(req_cols, collapse = ", "))
+  }
+  
   # -------- Internal: Build System Prompt --------
   .build_system_prompt <- function() {
     glue::glue(
       "You're an expert in LC-MS untargeted metabolomics pathway interpretation.
-
 Task: For each pathway, assess the likelihood that its small-molecule evidence is detectable and *biologically meaningful* in the given Sample Source (matrix).
-
 Use DISCRETE ANCHORS:
 matrix_detectability (0/25/50/75/100):
 - 100: Strong, reliable evidence expected in this matrix.
@@ -95,26 +107,22 @@ matrix_detectability (0/25/50/75/100):
 - 50: Possibly detectable; proxies exist but uncertain.
 - 25: Unlikely to be a valid readout (e.g., metabolites are artifacts, dietary waste, or pathological leaks).
 - 0: Essentially not observable or completely misleading in this matrix.
-
 Matrix heuristics (STRICT CONSTRAINTS):
 - Urine: Enriched for small, excreted metabolites.
   * STRICT CONSTRAINT: **Score matrix_detectability strictly as 0** for 
     'Aminoacyl-tRNA biosynthesis' and 'Amino acid biosynthesis'. 
     Detection in urine implies filtration/leak rather than systemic 
     biosynthesis, making it a misleading marker for this pathway.
-
 - Feces: Microbiome metabolism, SCFAs, bile acids.
   * STRICT CONSTRAINT: **Score matrix_detectability strictly as 0** for 
     'Lipid biosynthesis' and 'Amino acid metabolism' if the topic implies 
     host physiology. Fecal levels are dominated by microbial activity or 
     diet, rendering them invalid as host pathway readouts.
-
 - Plasma/Serum/Blood: Systemic metabolism, generally high detectability.
   * STRICT CONSTRAINT: **Score matrix_detectability strictly as 0** for 
     'Amino acid biosynthesis'. Detection in blood implies consumption/
     degradation rather than active biosynthesis, making it a misleading 
     marker for this pathway.
-
 Output STRICTLY compact JSON:
 {{
   \"results\": [
@@ -154,7 +162,7 @@ Output STRICTLY compact JSON:
     
     req <- httr2::request(paste0(api_base, "/chat/completions")) |>
       httr2::req_auth_bearer_token(api_key) |>
-      httr2::req_headers(`Content-Type` = "application/json") |>
+      httr2::req_headers("Content-Type" = "application/json") |>
       httr2::req_timeout(seconds = 300)
     
     body <- list(
@@ -203,7 +211,6 @@ Output STRICTLY compact JSON:
       ) %>%
       dplyr::select(pathway_id, matrix_relevance_score, matrix_relevance_reason)
     
-    # Clamp to allowed discrete values
     clamp_to_set <- function(x) {
       allowed <- c(0L, 25L, 50L, 75L, 100L)
       ifelse(x %in% allowed, x, NA_integer_)
@@ -212,55 +219,13 @@ Output STRICTLY compact JSON:
     res <- res %>%
       dplyr::mutate(matrix_relevance_score = clamp_to_set(matrix_relevance_score))
     
-    # Join with original data and add matrix_source
     original_df %>%
       dplyr::mutate(pathway_id = as.character(pathway_id)) %>%
       dplyr::left_join(res, by = "pathway_id") %>%
       dplyr::mutate(matrix_source = sample_source)
   }
   
-  # -------- Extract Data from Input --------
-  .extract_data <- function(results) {
-    req_cols <- c("pathway_id", "pathway_name", "pathway_description")
-    
-    # Case 1: S4 object with significant_modules slot (use isS4() for detection)
-    if (isS4(results) && "significant_modules" %in% methods::slotNames(results)) {
-      df <- methods::slot(results, "significant_modules")
-      if (!all(req_cols %in% names(df))) {
-        stop("significant_modules must contain columns: ", paste(req_cols, collapse = ", "))
-      }
-      return(df)
-    }
-    
-    # Case 2: Direct data.frame input
-    if (is.data.frame(results)) {
-      if (!all(req_cols %in% names(results))) {
-        stop("Input data.frame must contain columns: ", paste(req_cols, collapse = ", "))
-      }
-      return(results)
-    }
-    
-    # Case 3: List with significant_modules element
-    if (is.list(results) && "significant_modules" %in% names(results)) {
-      df <- results$significant_modules
-      if (!all(req_cols %in% names(df))) {
-        stop("significant_modules must contain columns: ", paste(req_cols, collapse = ", "))
-      }
-      return(df)
-    }
-    
-    stop(
-      "results must be one of:\n",
-      "  1. An S4 object with 'significant_modules' slot\n",
-      "  2. A data.frame with columns: ", paste(req_cols, collapse = ", "), "\n",
-      "  3. A list with 'significant_modules' element"
-    )
-  }
-  
   # -------- Main Logic --------
-  
-  # Extract significant_modules from input
-  significant_modules <- .extract_data(results)
   
   # Prepare data
   df <- significant_modules %>%
@@ -271,17 +236,16 @@ Output STRICTLY compact JSON:
       pathway_description = as.character(pathway_description)
     )
   
-  # Check if data is empty
   if (nrow(df) == 0) {
     warning("No pathways found in input data.")
-    return(
-      significant_modules %>%
-        dplyr::mutate(
-          matrix_relevance_score = NA_integer_,
-          matrix_relevance_reason = "No pathways to analyze.",
-          matrix_source = sample_source
-        )
-    )
+    updated_modules <- significant_modules %>%
+      dplyr::mutate(
+        matrix_relevance_score = NA_integer_,
+        matrix_relevance_reason = "No pathways to analyze.",
+        matrix_source = sample_source
+      )
+    methods::slot(results, "significant_modules") <- updated_modules
+    return(results)
   }
   
   message("Analyzing ", nrow(df), " unique pathways for matrix relevance in '", sample_source, "'...")
@@ -326,9 +290,12 @@ Output STRICTLY compact JSON:
     ""
   }
   
-  result <- .parse_and_merge(content, original_df = significant_modules, sample_source = sample_source)
+  updated_modules <- .parse_and_merge(content, original_df = significant_modules, sample_source = sample_source)
   
-  message("Analysis complete. ", sum(!is.na(result$matrix_relevance_score)), " pathways scored.")
+  # Update the S4 object's significant_modules slot
+  methods::slot(results, "significant_modules") <- updated_modules
   
-  return(result)
+  message("Analysis complete. ", sum(!is.na(updated_modules$matrix_relevance_score)), " pathways scored.")
+  
+  return(results)
 }
