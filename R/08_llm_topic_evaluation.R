@@ -159,17 +159,23 @@ analyze_literature_relevance <- function(results,
   
   # -------- Internal: Broader Fallback Search (100 candidates for re-ranking) --------
   .search_pubmed_broad <- function(pathway_name, research_topic, pubmed_api_key) {
+    # Remove parenthesized content entirely, then , and /  (keep -)
     clean_name <- stringr::str_replace_all(pathway_name, "\\s*\\(.*?\\)\\s*", " ")
-    clean_name <- stringr::str_replace_all(clean_name, ",", "")
+    clean_name <- stringr::str_replace_all(clean_name, "[,/]", " ")
     clean_name <- stringr::str_squish(clean_name)
 
     terms <- unlist(strsplit(clean_name, "\\s+"))
-    terms <- terms[nchar(terms) > 3]
-    if (length(terms) > 3) terms <- terms[1:3]
+    terms <- terms[!tolower(terms) %in% c("and", "in", "of")]
+    terms <- unique(terms)
+
     if (length(terms) == 0) return(list(count = 0L, pmids = character(0)))
 
+    term_query <- paste(
+      paste0(terms, "[Title/Abstract]"),
+      collapse = " AND "
+    )
     broad_query <- glue::glue(
-      '({paste(terms, collapse = " AND ")}) AND ("{research_topic}"[Title/Abstract])'
+      '({term_query}) AND ("{research_topic}"[Title/Abstract])'
     )
     out <- .search_pubmed(as.character(broad_query), retmax = 100L, retstart = 0L, pubmed_api_key = pubmed_api_key)
     out$count <- length(out$pmids)
