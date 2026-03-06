@@ -4,7 +4,7 @@
 #' specific research topic (e.g., cancer, pregnancy, diabetes) by querying PubMed.
 #' For each pathway, the function searches PubMed for co-occurrence with the
 #' research topic and returns supporting PMIDs. If no literature is found,
-#' GPT-4 provides a topic confidence score indicating how likely the pathway
+#' LLM provides a topic confidence score indicating how likely the pathway
 #' is to be relevant to the given research topic.
 #'
 #' @param results Object containing significant_modules slot with pathway information,
@@ -12,14 +12,15 @@
 #'   (pathway_id, pathway_name, pathway_description) in `significant_modules`.
 #' @param research_topic Character string describing the research topic (e.g., "cancer",
 #'   "pregnancy", "type 2 diabetes", "Parkinson's disease")
-#' @param api_key OpenAI API key (required for topic confidence scoring when no literature found)
+#' @param api_key API key (OpenAI or SiliconFlow, depending on provider)
+#' @param provider API provider. Options: "openai" (default), "siliconflow"
 #' @param pubmed_api_key Optional NCBI API key for higher rate limits on PubMed queries.
 #'   Without it, requests are limited to 3/second; with it, 10/second.
 #' @param max_pmids Deprecated and ignored. Kept for backward compatibility.
 #' @param similarity_cutoff Minimum cosine similarity threshold (0-1) for retaining fuzzy-matched
 #'   PMIDs after embedding re-ranking. Candidates below this threshold are discarded.
 #'   Default: 0.6
-#' @param model OpenAI model to use for topic confidence scoring. Default: "gpt-4.1"
+#' @param model Model to use. If NULL, uses provider default: "gpt-4o" for OpenAI, "Qwen/Qwen2.5-7B-Instruct" for SiliconFlow
 #' @param temperature Sampling temperature for model. Default: 0.2
 #' @param max_tokens Maximum tokens in response. Default: 8000
 #' @param rate_delay Delay in seconds between PubMed requests to avoid rate limiting.
@@ -36,10 +37,19 @@
 #'
 #' @examples
 #' \dontrun{
+#' # Using OpenAI (default)
 #' result_obj <- analyze_literature_relevance(
 #'   results = my_results,
 #'   research_topic = "breast cancer",
-#'   api_key = "your-openai-api-key"
+#'   api_key = "sk-openai-key"
+#' )
+#'
+#' # Using SiliconFlow with Qwen
+#' result_obj <- analyze_literature_relevance(
+#'   results = my_results,
+#'   research_topic = "diabetes",
+#'   api_key = "sk-siliconflow-key",
+#'   provider = "siliconflow"
 #' )
 #' }
 #'
@@ -56,22 +66,49 @@
 analyze_literature_relevance <- function(results,
                                          research_topic,
                                          api_key,
+                                         provider = "openai",
                                          pubmed_api_key = NULL,
                                          max_pmids = 10,
                                          similarity_cutoff = 0.6,
-                                         model = "gpt-4.1",
+                                         model = NULL,
                                          temperature = 0.2,
                                          max_tokens = 8000,
                                          rate_delay = 0.35) {
   
   # -------- Validate Inputs --------
   if (missing(api_key) || is.null(api_key) || nchar(api_key) == 0) {
-    stop("api_key is required. Please provide a valid OpenAI API key.")
+    stop("api_key is required. Please provide a valid API key.")
   }
   if (missing(research_topic) || is.null(research_topic) || nchar(trimws(research_topic)) == 0) {
     stop("research_topic is required. Please provide a research topic (e.g., 'cancer', 'pregnancy').")
   }
   research_topic <- trimws(research_topic)
+
+  # -------- Validate Provider --------
+  provider <- tolower(trimws(provider))
+  valid_providers <- c("openai", "siliconflow")
+  if (!provider %in% valid_providers) {
+    stop("provider must be one of: ", paste(valid_providers, collapse = ", "))
+  }
+
+  # -------- Configure API based on provider --------
+  if (provider == "openai") {
+    api_base <- "https://api.openai.com/v1"
+    default_chat_model <- "gpt-4o"
+    default_embedding_model <- "text-embedding-3-small"
+    has_embedding_api <- TRUE
+  } else if (provider == "siliconflow") {
+    api_base <- "https://api.siliconflow.cn/v1"
+    default_chat_model <- "Qwen/Qwen2.5-7B-Instruct"
+    default_embedding_model <- "BAAI/bge-large-zh-v1.5"
+    # Note: SiliconFlow may not have embedding API, we'll handle this gracefully
+    has_embedding_api <- TRUE
+  }
+
+  # Use provided model or default for chat
+  if (is.null(model)) {
+    model <- default_chat_model
+  }
   
   # -------- Validate results is S4 with significant_modules --------
   if (!isS4(results) || !"significant_modules" %in% methods::slotNames(results)) {
@@ -270,22 +307,23 @@ analyze_literature_relevance <- function(results,
       dplyr::mutate(text = ifelse(is.na(text), "", text))
   }
 
-  # -------- Internal: Get Embeddings via OpenAI --------
-  .get_embeddings <- function(texts, api_key) {
+  # -------- Internal: Get Embeddings via LLM API --------
+  .get_embeddings <- function(texts, api_key, api_base, embedding_model) {
     texts <- ifelse(is.na(texts) | nchar(trimws(texts)) == 0, ".", texts)
     texts <- substr(texts, 1, 8000)
 
-    req <- httr2::request("https://api.openai.com/v1/embeddings") |>
+    embedding_url <- paste0(api_base, "/embeddings")
+    req <- httr2::request(embedding_url) |>
       httr2::req_auth_bearer_token(api_key) |>
       httr2::req_headers("Content-Type" = "application/json") |>
       httr2::req_timeout(seconds = 120)
 
-    body <- list(model = "text-embedding-3-small", input = as.list(texts))
+    body <- list(model = embedding_model, input = as.list(texts))
 
     resp <- tryCatch(
       req |> httr2::req_body_json(body) |> httr2::req_perform(),
       error = function(e) {
-        warning("OpenAI Embeddings API failed: ", conditionMessage(e))
+        warning("Embeddings API failed: ", conditionMessage(e))
         return(NULL)
       }
     )
@@ -317,7 +355,7 @@ analyze_literature_relevance <- function(results,
     )
     texts_to_embed <- c(query_text, abstracts$text)
 
-    embeddings <- .get_embeddings(texts_to_embed, api_key)
+    embeddings <- .get_embeddings(texts_to_embed, api_key, api_base, default_embedding_model)
 
     if (is.null(embeddings) || length(embeddings) < 2) {
       warning("Embedding failed; returning all fuzzy candidates unfiltered.")
@@ -338,7 +376,7 @@ analyze_literature_relevance <- function(results,
   
   # -------- Internal: Get Topic Confidence Scores via OpenAI --------
   .get_topic_confidence_scores <- function(pathways_without_lit, research_topic, api_key,
-                                           model, temperature, max_tokens) {
+                                           model, temperature, max_tokens, api_base) {
     if (nrow(pathways_without_lit) == 0) {
       return(tibble::tibble(pathway_id = character(0), topic_confidence_score = integer(0)))
     }
@@ -392,7 +430,7 @@ Output STRICTLY compact JSON:
       list(role = "user", content = user_content)
     )
 
-    api_base <- "https://api.openai.com/v1"
+    # api_base is now passed as parameter
     req <- httr2::request(paste0(api_base, "/chat/completions")) |>
       httr2::req_auth_bearer_token(api_key) |>
       httr2::req_headers(`Content-Type` = "application/json") |>
@@ -547,7 +585,8 @@ Output STRICTLY compact JSON:
       api_key = api_key,
       model = model,
       temperature = temperature,
-      max_tokens = max_tokens
+      max_tokens = max_tokens,
+      api_base = api_base
     )
   } else {
     scores <- tibble::tibble(pathway_id = character(0), topic_confidence_score = integer(0))

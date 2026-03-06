@@ -1,13 +1,14 @@
 #' @title Analyze Matrix Relevance for Metabolic Pathways
 #' @description
 #' Evaluate the detectability and biological meaningfulness of metabolic pathways
-#' in a given sample matrix (e.g., urine, plasma, feces) using GPT-4.
+#' in a given sample matrix (e.g., urine, plasma, feces) using GPT-4 or Qwen.
 #'
 #' @param results Object containing significant_modules slot with pathway information,
 #'   or a data.frame with required columns (pathway_id, pathway_name, pathway_description)
 #' @param sample_source Sample matrix type. Options: "urine", "plasma", "serum", "blood", "feces"
-#' @param api_key OpenAI API key (required)
-#' @param model OpenAI model to use. Default: "gpt-4o"
+#' @param api_key API key (OpenAI or SiliconFlow, depending on provider)
+#' @param provider API provider. Options: "openai" (default), "siliconflow"
+#' @param model Model to use. If NULL, uses provider default: "gpt-4o" for OpenAI, "Qwen/Qwen2.5-7B-Instruct" for SiliconFlow
 #' @param temperature Sampling temperature for model. Default: 0.2
 #' @param max_tokens Maximum tokens in response. Default: 8000
 #'
@@ -30,22 +31,28 @@
 #'
 #' @examples
 #' \dontrun{
+#' # Using OpenAI (default)
 #' result_df <- analyze_matrix_relevance(
 #'   results = my_results,
 #'   sample_source = "urine",
-#'   api_key = "your-api-key"
+#'   api_key = "sk-openai-key"
 #' )
 #'
-#' # Using a data.frame directly
-#' df <- data.frame(
-#'   pathway_id = c("path1", "path2"),
-#'   pathway_name = c("Glycolysis", "TCA Cycle"),
-#'   pathway_description = c("Glucose metabolism", "Central carbon metabolism")
-#' )
+#' # Using SiliconFlow with Qwen
 #' result_df <- analyze_matrix_relevance(
-#'   results = df,
+#'   results = my_results,
+#'   sample_source = "urine",
+#'   api_key = "sk-siliconflow-key",
+#'   provider = "siliconflow"
+#' )
+#'
+#' # Custom model specification
+#' result_df <- analyze_matrix_relevance(
+#'   results = my_results,
 #'   sample_source = "plasma",
-#'   api_key = "your-api-key"
+#'   api_key = "sk-siliconflow-key",
+#'   provider = "siliconflow",
+#'   model = "Qwen/Qwen2.5-14B-Instruct"
 #' )
 #' }
 #'
@@ -61,13 +68,35 @@
 analyze_matrix_relevance <- function(results,
                                      sample_source,
                                      api_key,
-                                     model = "gpt-4.1",
+                                     provider = "openai",
+                                     model = NULL,
                                      temperature = 0.2,
                                      max_tokens = 8000) {
-  
+
   # -------- Validate API Key --------
   if (missing(api_key) || is.null(api_key) || nchar(api_key) == 0) {
-    stop("api_key is required. Please provide a valid OpenAI API key.")
+    stop("api_key is required. Please provide a valid API key.")
+  }
+
+  # -------- Validate Provider --------
+  provider <- tolower(trimws(provider))
+  valid_providers <- c("openai", "siliconflow")
+  if (!provider %in% valid_providers) {
+    stop("provider must be one of: ", paste(valid_providers, collapse = ", "))
+  }
+
+  # -------- Configure API based on provider --------
+  if (provider == "openai") {
+    api_base <- "https://api.openai.com/v1"
+    default_model <- "gpt-4o"
+  } else if (provider == "siliconflow") {
+    api_base <- "https://api.siliconflow.cn/v1"
+    default_model <- "Qwen/Qwen2.5-7B-Instruct"
+  }
+
+  # Use provided model or default
+  if (is.null(model)) {
+    model <- default_model
   }
   
   # -------- Input Validation --------
@@ -156,9 +185,8 @@ Output STRICTLY compact JSON:
       jsonlite::toJSON(auto_unbox = TRUE, pretty = FALSE)
   }
   
-  # -------- Internal: Call OpenAI API --------
-  .call_openai <- function(messages, model, temperature, max_tokens, api_key) {
-    api_base <- "https://api.openai.com/v1"
+  # -------- Internal: Call LLM API --------
+  .call_llm_api <- function(messages, model, temperature, max_tokens, api_key, api_base) {
     
     req <- httr2::request(paste0(api_base, "/chat/completions")) |>
       httr2::req_auth_bearer_token(api_key) |>
@@ -267,12 +295,13 @@ Output STRICTLY compact JSON:
   )
   
   # Call API
-  resp <- .call_openai(
+  resp <- .call_llm_api(
     messages = messages,
     model = model,
     temperature = temperature,
     max_tokens = max_tokens,
-    api_key = api_key
+    api_key = api_key,
+    api_base = api_base
   )
   
   # Parse response

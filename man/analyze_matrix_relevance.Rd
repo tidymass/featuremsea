@@ -8,7 +8,8 @@ analyze_matrix_relevance(
   results,
   sample_source,
   api_key,
-  model = "gpt-4.1",
+  provider = "openai",
+  model = NULL,
   temperature = 0.2,
   max_tokens = 8000
 )
@@ -19,9 +20,11 @@ or a data.frame with required columns (pathway_id, pathway_name, pathway_descrip
 
 \item{sample_source}{Sample matrix type. Options: "urine", "plasma", "serum", "blood", "feces"}
 
-\item{api_key}{OpenAI API key (required)}
+\item{api_key}{API key (OpenAI or SiliconFlow, depending on provider)}
 
-\item{model}{OpenAI model to use. Default: "gpt-4o"}
+\item{provider}{API provider. Options: "openai" (default), "siliconflow"}
+
+\item{model}{Model to use. If NULL, uses provider default: "gpt-4o" for OpenAI, "Qwen/Qwen2.5-7B-Instruct" for SiliconFlow}
 
 \item{temperature}{Sampling temperature for model. Default: 0.2}
 
@@ -37,7 +40,7 @@ A data frame based on significant_modules with three additional columns:
 }
 \description{
 Evaluate the detectability and biological meaningfulness of metabolic pathways
-in a given sample matrix (e.g., urine, plasma, feces) using GPT-4.
+in a given sample matrix (e.g., urine, plasma, feces) using GPT-4 or Qwen.
 }
 \details{
 The function uses GPT-4 to assess pathway detectability with the following scoring:
@@ -51,22 +54,28 @@ The function uses GPT-4 to assess pathway detectability with the following scori
 }
 \examples{
 \dontrun{
+# Using OpenAI (default)
 result_df <- analyze_matrix_relevance(
   results = my_results,
   sample_source = "urine",
-  api_key = "your-api-key"
+  api_key = "sk-openai-key"
 )
 
-# Using a data.frame directly
-df <- data.frame(
-  pathway_id = c("path1", "path2"),
-  pathway_name = c("Glycolysis", "TCA Cycle"),
-  pathway_description = c("Glucose metabolism", "Central carbon metabolism")
-)
+# Using SiliconFlow with Qwen
 result_df <- analyze_matrix_relevance(
-  results = df,
+  results = my_results,
+  sample_source = "urine",
+  api_key = "sk-siliconflow-key",
+  provider = "siliconflow"
+)
+
+# Custom model specification
+result_df <- analyze_matrix_relevance(
+  results = my_results,
   sample_source = "plasma",
-  api_key = "your-api-key"
+  api_key = "sk-siliconflow-key",
+  provider = "siliconflow",
+  model = "Qwen/Qwen2.5-14B-Instruct"
 )
 }
 

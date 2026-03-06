@@ -8,9 +8,11 @@ analyze_literature_relevance(
   results,
   research_topic,
   api_key,
+  provider = "openai",
   pubmed_api_key = NULL,
   max_pmids = 10,
-  model = "gpt-4.1",
+  similarity_cutoff = 0.6,
+  model = NULL,
   temperature = 0.2,
   max_tokens = 8000,
   rate_delay = 0.35
@@ -18,19 +20,26 @@ analyze_literature_relevance(
 }
 \arguments{
 \item{results}{Object containing significant_modules slot with pathway information,
-or a data.frame with required columns (pathway_id, pathway_name, pathway_description)}
+must be an S4 object with required columns
+(pathway_id, pathway_name, pathway_description) in `significant_modules`.}
 
 \item{research_topic}{Character string describing the research topic (e.g., "cancer",
 "pregnancy", "type 2 diabetes", "Parkinson's disease")}
 
-\item{api_key}{OpenAI API key (required for biological explanations when no literature found)}
+\item{api_key}{API key (OpenAI or SiliconFlow, depending on provider)}
+
+\item{provider}{API provider. Options: "openai" (default), "siliconflow"}
 
 \item{pubmed_api_key}{Optional NCBI API key for higher rate limits on PubMed queries.
 Without it, requests are limited to 3/second; with it, 10/second.}
 
-\item{max_pmids}{Maximum number of PMIDs to return per pathway. Default: 10}
+\item{max_pmids}{Deprecated and ignored. Kept for backward compatibility.}
 
-\item{model}{OpenAI model to use for biological explanations. Default: "gpt-4o"}
+\item{similarity_cutoff}{Minimum cosine similarity threshold (0-1) for retaining fuzzy-matched
+PMIDs after embedding re-ranking. Candidates below this threshold are discarded.
+Default: 0.6}
+
+\item{model}{Model to use. If NULL, uses provider default: "gpt-4o" for OpenAI, "Qwen/Qwen2.5-7B-Instruct" for SiliconFlow}
 
 \item{temperature}{Sampling temperature for model. Default: 0.2}
 
@@ -40,10 +49,12 @@ Without it, requests are limited to 3/second; with it, 10/second.}
 Default: 0.35}
 }
 \value{
-A data frame based on significant_modules with three additional columns:
+Updated input S4 object with `significant_modules` augmented by:
 \itemize{
-  \item \code{literature_pmids}: PMIDs separated by \code{{}} (e.g., "12345{}67890"), or NA if none found
-  \item \code{biological_explanation}: AI-generated explanation when no literature found, NA otherwise
+  \item \code{literature_pmids_exact}: PMIDs from exact query, separated by \code{{}}
+  \item \code{literature_pmids_fuzzy}: PMIDs from fuzzy search filtered by embedding
+    similarity >= \code{similarity_cutoff}, separated by \code{{}}
+  \item \code{topic_confidence_score}: Integer score (0/25/50/75/100) when no literature found, NA otherwise
   \item \code{research_topic}: The research topic used for evaluation
 }
 }
@@ -52,26 +63,24 @@ Evaluate the literature support linking significant metabolic pathways to a
 specific research topic (e.g., cancer, pregnancy, diabetes) by querying PubMed.
 For each pathway, the function searches PubMed for co-occurrence with the
 research topic and returns supporting PMIDs. If no literature is found,
-GPT-4 provides a plausible biological explanation for the association.
+LLM provides a topic confidence score indicating how likely the pathway
+is to be relevant to the given research topic.
 }
 \examples{
 \dontrun{
-result_df <- analyze_literature_relevance(
+# Using OpenAI (default)
+result_obj <- analyze_literature_relevance(
   results = my_results,
   research_topic = "breast cancer",
-  api_key = "your-openai-api-key"
+  api_key = "sk-openai-key"
 )
 
-# Using a data.frame directly
-df <- data.frame(
-  pathway_id = c("hsa00010", "hsa00020"),
-  pathway_name = c("Glycolysis / Gluconeogenesis", "Citrate cycle (TCA cycle)"),
-  pathway_description = c("Glucose metabolism pathway", "Central carbon metabolism")
-)
-result_df <- analyze_literature_relevance(
-  results = df,
-  research_topic = "colorectal cancer",
-  api_key = "your-openai-api-key"
+# Using SiliconFlow with Qwen
+result_obj <- analyze_literature_relevance(
+  results = my_results,
+  research_topic = "diabetes",
+  api_key = "sk-siliconflow-key",
+  provider = "siliconflow"
 )
 }
 
