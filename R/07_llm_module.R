@@ -1,41 +1,43 @@
-#' @title Analyze Matrix Relevance for Metabolic Pathways
+#' @title Analyze Matrix Confidence for Metabolic Pathways
 #' @description
-#' Evaluate the detectability and biological meaningfulness of metabolic pathways
-#' in a given sample matrix (e.g., urine, plasma, feces) using GPT-4 or Qwen.
+#' Evaluate the confidence of inferring metabolic pathway activity from
+#' metabolites detected in a given sample matrix (e.g., urine, plasma, feces) using GPT-4 or Qwen.
 #'
 #' @param results Object containing significant_modules slot with pathway information,
 #'   or a data.frame with required columns (pathway_id, pathway_name, pathway_description)
 #' @param sample_source Sample matrix type. Options: "urine", "plasma", "serum", "blood", "feces"
 #' @param api_key API key (OpenAI or SiliconFlow, depending on provider)
-#' @param provider API provider. Options: "openai" (default), "siliconflow"
+#' @param provider API provider. Required. Options: "openai", "siliconflow"
 #' @param model Model to use. If NULL, uses provider default: "gpt-4o" for OpenAI, "Qwen/Qwen2.5-7B-Instruct" for SiliconFlow
 #' @param temperature Sampling temperature for model. Default: 0.2
 #' @param max_tokens Maximum tokens in response. Default: 8000
 #'
 #' @return A data frame based on significant_modules with three additional columns:
 #' \itemize{
-#'   \item \code{matrix_relevance_score}: Integer score (0/25/50/75/100)
-#'   \item \code{matrix_relevance_reason}: Brief explanation of the score
+#'   \item \code{matrix_confidence_score}: Integer score (0/25/50/75/100)
+#'   \item \code{matrix_confidence_reason}: Brief explanation of the score
 #'   \item \code{matrix_source}: The sample source used for evaluation
 #' }
 #'
 #' @details
-#' The function uses GPT-4 to assess pathway detectability with the following scoring:
+#' The function uses LLM to assess the confidence of inferring pathway activity from
+#' metabolites in the given matrix with the following scoring:
 #' \itemize{
-#'   \item 100: Strong, reliable evidence expected in this matrix
-#'   \item 75: Likely detectable; several expected analytes
-#'   \item 50: Possibly detectable; proxies exist but uncertain
-#'   \item 25: Unlikely to be a valid readout
-#'   \item 0: Not observable or completely misleading in this matrix
+#'   \item 100: High confidence - metabolites in this matrix are reliable indicators of pathway activity
+#'   \item 75: Good confidence - metabolites likely reflect pathway activity with some certainty
+#'   \item 50: Moderate confidence - metabolites may indicate pathway activity but with uncertainty
+#'   \item 25: Low confidence - metabolites provide weak evidence of pathway activity
+#'   \item 0: No confidence - metabolites in this matrix do not reliably indicate pathway activity
 #' }
 #'
 #' @examples
 #' \dontrun{
-#' # Using OpenAI (default)
+#' # Using OpenAI
 #' result_df <- analyze_matrix_relevance(
 #'   results = my_results,
 #'   sample_source = "urine",
-#'   api_key = "sk-openai-key"
+#'   api_key = "sk-openai-key",
+#'   provider = "openai"
 #' )
 #'
 #' # Using SiliconFlow with Qwen
@@ -68,7 +70,7 @@
 analyze_matrix_relevance <- function(results,
                                      sample_source,
                                      api_key,
-                                     provider = "openai",
+                                     provider,
                                      model = NULL,
                                      temperature = 0.2,
                                      max_tokens = 8000) {
@@ -79,10 +81,14 @@ analyze_matrix_relevance <- function(results,
   }
 
   # -------- Validate Provider --------
+  if (missing(provider) || is.null(provider) || nchar(trimws(provider)) == 0) {
+    stop("provider is required. Please choose one of: 'openai' or 'siliconflow'")
+  }
+
   provider <- tolower(trimws(provider))
   valid_providers <- c("openai", "siliconflow")
   if (!provider %in% valid_providers) {
-    stop("provider must be one of: ", paste(valid_providers, collapse = ", "))
+    stop("Invalid provider '", provider, "'. Please choose one of: 'openai' or 'siliconflow'")
   }
 
   # -------- Configure API based on provider --------
@@ -128,38 +134,38 @@ analyze_matrix_relevance <- function(results,
   .build_system_prompt <- function() {
     glue::glue(
       "You're an expert in LC-MS untargeted metabolomics pathway interpretation.
-Task: For each pathway, assess the likelihood that its small-molecule evidence is detectable and *biologically meaningful* in the given Sample Source (matrix).
+Task: For each pathway, assess the CONFIDENCE of inferring pathway activity from metabolites detected in the given Sample Source (matrix). Note that pathways do not exist directly in biological matrices, but their activity can be inferred from the presence and levels of related metabolites.
 Use DISCRETE ANCHORS:
-matrix_detectability (0/25/50/75/100):
-- 100: Strong, reliable evidence expected in this matrix.
-- 75: Likely detectable; several expected analytes.
-- 50: Possibly detectable; proxies exist but uncertain.
-- 25: Unlikely to be a valid readout (e.g., metabolites are artifacts, dietary waste, or pathological leaks).
-- 0: Essentially not observable or completely misleading in this matrix.
-Matrix heuristics (STRICT CONSTRAINTS):
-- Urine: Enriched for small, excreted metabolites.
-  * STRICT CONSTRAINT: **Score matrix_detectability strictly as 0** for 
-    'Aminoacyl-tRNA biosynthesis' and 'Amino acid biosynthesis'. 
-    Detection in urine implies filtration/leak rather than systemic 
-    biosynthesis, making it a misleading marker for this pathway.
-- Feces: Microbiome metabolism, SCFAs, bile acids.
-  * STRICT CONSTRAINT: **Score matrix_detectability strictly as 0** for 
-    'Lipid biosynthesis' and 'Amino acid metabolism' if the topic implies 
-    host physiology. Fecal levels are dominated by microbial activity or 
-    diet, rendering them invalid as host pathway readouts.
-- Plasma/Serum/Blood: Systemic metabolism, generally high detectability.
-  * STRICT CONSTRAINT: **Score matrix_detectability strictly as 0** for 
-    'Amino acid biosynthesis'. Detection in blood implies consumption/
-    degradation rather than active biosynthesis, making it a misleading 
-    marker for this pathway.
+matrix_confidence (0/25/50/75/100):
+- 100: High confidence - metabolites in this matrix reliably indicate pathway activity.
+- 75: Good confidence - metabolites likely reflect pathway activity with reasonable certainty.
+- 50: Moderate confidence - metabolites may indicate pathway activity but interpretation requires caution.
+- 25: Low confidence - metabolites provide weak evidence of pathway activity due to confounding factors.
+- 0: No confidence - metabolites in this matrix are unreliable indicators of pathway activity.
+Matrix interpretation guidelines (STRICT CONSTRAINTS):
+- Urine: Reflects excretion and filtration products; good for catabolic end-products.
+  * STRICT CONSTRAINT: **Score matrix_confidence strictly as 0** for
+    'Aminoacyl-tRNA biosynthesis' and 'Amino acid biosynthesis'.
+    Amino acids in urine typically result from filtration/pathological leaks
+    rather than reflecting active biosynthesis, making inference unreliable.
+- Feces: Dominated by microbial metabolism and dietary remnants.
+  * STRICT CONSTRAINT: **Score matrix_confidence strictly as 0** for
+    'Lipid biosynthesis' and host 'Amino acid metabolism'.
+    Fecal metabolites are primarily microbial or dietary in origin,
+    not reliable indicators of host metabolic pathway activity.
+- Plasma/Serum/Blood: Reflects systemic circulation and active metabolism.
+  * STRICT CONSTRAINT: **Score matrix_confidence strictly as 0** for
+    'Amino acid biosynthesis'. Blood amino acids reflect consumption/turnover
+    rather than active biosynthesis, making inference of biosynthetic
+    pathway activity unreliable.
 Output STRICTLY compact JSON:
 {{
   \"results\": [
     {{
       \"pathway_id\": string,
       \"pathway_name\": string,
-      \"matrix_detectability\": integer (0,25,50,75/100),
-      \"reason\": string (<= 2 sentences; explain matrix validity)
+      \"matrix_confidence\": integer (0,25,50,75/100),
+      \"reason\": string (<= 2 sentences; explain inference confidence)
     }},
     ...
   ]
@@ -224,8 +230,8 @@ Output STRICTLY compact JSON:
       return(
         original_df %>%
           dplyr::mutate(
-            matrix_relevance_score = NA_integer_,
-            matrix_relevance_reason = "Model response could not be parsed as expected JSON.",
+            matrix_confidence_score = NA_integer_,
+            matrix_confidence_reason = "Model response could not be parsed as expected JSON.",
             matrix_source = sample_source
           )
       )
@@ -234,10 +240,10 @@ Output STRICTLY compact JSON:
     res <- tibble::as_tibble(out$results) %>%
       dplyr::mutate(
         pathway_id = as.character(pathway_id),
-        matrix_relevance_score = suppressWarnings(as.integer(matrix_detectability)),
-        matrix_relevance_reason = as.character(reason)
+        matrix_confidence_score = suppressWarnings(as.integer(matrix_confidence)),
+        matrix_confidence_reason = as.character(reason)
       ) %>%
-      dplyr::select(pathway_id, matrix_relevance_score, matrix_relevance_reason)
+      dplyr::select(pathway_id, matrix_confidence_score, matrix_confidence_reason)
     
     clamp_to_set <- function(x) {
       allowed <- c(0L, 25L, 50L, 75L, 100L)
@@ -245,7 +251,7 @@ Output STRICTLY compact JSON:
     }
     
     res <- res %>%
-      dplyr::mutate(matrix_relevance_score = clamp_to_set(matrix_relevance_score))
+      dplyr::mutate(matrix_confidence_score = clamp_to_set(matrix_confidence_score))
     
     original_df %>%
       dplyr::mutate(pathway_id = as.character(pathway_id)) %>%
@@ -268,15 +274,15 @@ Output STRICTLY compact JSON:
     warning("No pathways found in input data.")
     updated_modules <- significant_modules %>%
       dplyr::mutate(
-        matrix_relevance_score = NA_integer_,
-        matrix_relevance_reason = "No pathways to analyze.",
+        matrix_confidence_score = NA_integer_,
+        matrix_confidence_reason = "No pathways to analyze.",
         matrix_source = sample_source
       )
     methods::slot(results, "significant_modules") <- updated_modules
     return(results)
   }
   
-  message("Analyzing ", nrow(df), " unique pathways for matrix relevance in '", sample_source, "'...")
+  message("Analyzing ", nrow(df), " unique pathways for matrix confidence in '", sample_source, "'...")
   
   # Build prompts
   system_prompt <- .build_system_prompt()
@@ -288,7 +294,7 @@ Output STRICTLY compact JSON:
       role = "user",
       content = paste0(
         "Sample Source: ", sample_source, "\n",
-        "Evaluate the matrix detectability for the following pathways (as JSON). Each reason <= 2 sentences.\n",
+        "Evaluate the matrix confidence for inferring pathway activity from the following pathways (as JSON). Each reason <= 2 sentences.\n",
         user_payload_json
       )
     )
@@ -324,7 +330,7 @@ Output STRICTLY compact JSON:
   # Update the S4 object's significant_modules slot
   methods::slot(results, "significant_modules") <- updated_modules
   
-  message("Analysis complete. ", sum(!is.na(updated_modules$matrix_relevance_score)), " pathways scored.")
+  message("Analysis complete. ", sum(!is.na(updated_modules$matrix_confidence_score)), " pathways scored.")
   
   return(results)
 }

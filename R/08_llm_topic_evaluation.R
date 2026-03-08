@@ -13,7 +13,7 @@
 #' @param research_topic Character string describing the research topic (e.g., "cancer",
 #'   "pregnancy", "type 2 diabetes", "Parkinson's disease")
 #' @param api_key API key (OpenAI or SiliconFlow, depending on provider)
-#' @param provider API provider. Options: "openai" (default), "siliconflow"
+#' @param provider API provider. Required. Options: "openai", "siliconflow"
 #' @param pubmed_api_key Optional NCBI API key for higher rate limits on PubMed queries.
 #'   Without it, requests are limited to 3/second; with it, 10/second.
 #' @param max_pmids Deprecated and ignored. Kept for backward compatibility.
@@ -37,11 +37,12 @@
 #'
 #' @examples
 #' \dontrun{
-#' # Using OpenAI (default)
+#' # Using OpenAI
 #' result_obj <- analyze_literature_relevance(
 #'   results = my_results,
 #'   research_topic = "breast cancer",
-#'   api_key = "sk-openai-key"
+#'   api_key = "sk-openai-key",
+#'   provider = "openai"
 #' )
 #'
 #' # Using SiliconFlow with Qwen
@@ -66,7 +67,7 @@
 analyze_literature_relevance <- function(results,
                                          research_topic,
                                          api_key,
-                                         provider = "openai",
+                                         provider,
                                          pubmed_api_key = NULL,
                                          max_pmids = 10,
                                          similarity_cutoff = 0.6,
@@ -85,10 +86,14 @@ analyze_literature_relevance <- function(results,
   research_topic <- trimws(research_topic)
 
   # -------- Validate Provider --------
+  if (missing(provider) || is.null(provider) || nchar(trimws(provider)) == 0) {
+    stop("provider is required. Please choose one of: 'openai' or 'siliconflow'")
+  }
+
   provider <- tolower(trimws(provider))
   valid_providers <- c("openai", "siliconflow")
   if (!provider %in% valid_providers) {
-    stop("provider must be one of: ", paste(valid_providers, collapse = ", "))
+    stop("Invalid provider '", provider, "'. Please choose one of: 'openai' or 'siliconflow'")
   }
 
   # -------- Configure API based on provider --------

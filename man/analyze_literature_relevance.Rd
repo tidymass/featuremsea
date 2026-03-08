@@ -8,7 +8,7 @@ analyze_literature_relevance(
   results,
   research_topic,
   api_key,
-  provider = "openai",
+  provider,
   pubmed_api_key = NULL,
   max_pmids = 10,
   similarity_cutoff = 0.6,
@@ -28,7 +28,7 @@ must be an S4 object with required columns
 
 \item{api_key}{API key (OpenAI or SiliconFlow, depending on provider)}
 
-\item{provider}{API provider. Options: "openai" (default), "siliconflow"}
+\item{provider}{API provider. Required. Options: "openai", "siliconflow"}
 
 \item{pubmed_api_key}{Optional NCBI API key for higher rate limits on PubMed queries.
 Without it, requests are limited to 3/second; with it, 10/second.}
@@ -68,11 +68,12 @@ is to be relevant to the given research topic.
 }
 \examples{
 \dontrun{
-# Using OpenAI (default)
+# Using OpenAI
 result_obj <- analyze_literature_relevance(
   results = my_results,
   research_topic = "breast cancer",
-  api_key = "sk-openai-key"
+  api_key = "sk-openai-key",
+  provider = "openai"
 )
 
 # Using SiliconFlow with Qwen

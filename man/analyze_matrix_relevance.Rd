@@ -2,13 +2,13 @@
 % Please edit documentation in R/07_llm_module.R
 \name{analyze_matrix_relevance}
 \alias{analyze_matrix_relevance}
-\title{Analyze Matrix Relevance for Metabolic Pathways}
+\title{Analyze Matrix Confidence for Metabolic Pathways}
 \usage{
 analyze_matrix_relevance(
   results,
   sample_source,
   api_key,
-  provider = "openai",
+  provider,
   model = NULL,
   temperature = 0.2,
   max_tokens = 8000
@@ -22,7 +22,7 @@ or a data.frame with required columns (pathway_id, pathway_name, pathway_descrip
 
 \item{api_key}{API key (OpenAI or SiliconFlow, depending on provider)}
 
-\item{provider}{API provider. Options: "openai" (default), "siliconflow"}
+\item{provider}{API provider. Required. Options: "openai", "siliconflow"}
 
 \item{model}{Model to use. If NULL, uses provider default: "gpt-4o" for OpenAI, "Qwen/Qwen2.5-7B-Instruct" for SiliconFlow}
 
@@ -33,32 +33,34 @@ or a data.frame with required columns (pathway_id, pathway_name, pathway_descrip
 \value{
 A data frame based on significant_modules with three additional columns:
 \itemize{
-  \item \code{matrix_relevance_score}: Integer score (0/25/50/75/100)
-  \item \code{matrix_relevance_reason}: Brief explanation of the score
+  \item \code{matrix_confidence_score}: Integer score (0/25/50/75/100)
+  \item \code{matrix_confidence_reason}: Brief explanation of the score
   \item \code{matrix_source}: The sample source used for evaluation
 }
 }
 \description{
-Evaluate the detectability and biological meaningfulness of metabolic pathways
-in a given sample matrix (e.g., urine, plasma, feces) using GPT-4 or Qwen.
+Evaluate the confidence of inferring metabolic pathway activity from
+metabolites detected in a given sample matrix (e.g., urine, plasma, feces) using GPT-4 or Qwen.
 }
 \details{
-The function uses GPT-4 to assess pathway detectability with the following scoring:
+The function uses LLM to assess the confidence of inferring pathway activity from
+metabolites in the given matrix with the following scoring:
 \itemize{
-  \item 100: Strong, reliable evidence expected in this matrix
-  \item 75: Likely detectable; several expected analytes
-  \item 50: Possibly detectable; proxies exist but uncertain
-  \item 25: Unlikely to be a valid readout
-  \item 0: Not observable or completely misleading in this matrix
+  \item 100: High confidence - metabolites in this matrix are reliable indicators of pathway activity
+  \item 75: Good confidence - metabolites likely reflect pathway activity with some certainty
+  \item 50: Moderate confidence - metabolites may indicate pathway activity but with uncertainty
+  \item 25: Low confidence - metabolites provide weak evidence of pathway activity
+  \item 0: No confidence - metabolites in this matrix do not reliably indicate pathway activity
 }
 }
 \examples{
 \dontrun{
-# Using OpenAI (default)
+# Using OpenAI
 result_df <- analyze_matrix_relevance(
   results = my_results,
   sample_source = "urine",
-  api_key = "sk-openai-key"
+  api_key = "sk-openai-key",
+  provider = "openai"
 )
 
 # Using SiliconFlow with Qwen
