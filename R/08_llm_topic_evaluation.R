@@ -20,7 +20,7 @@
 #' @param similarity_cutoff Minimum cosine similarity threshold (0-1) for retaining fuzzy-matched
 #'   PMIDs after embedding re-ranking. Candidates below this threshold are discarded.
 #'   Default: 0.6
-#' @param model Model to use. If NULL, uses provider default: "gpt-4o" for OpenAI, "Qwen/Qwen2.5-7B-Instruct" for SiliconFlow
+#' @param model Model to use. If NULL, uses provider default: "gpt-4o" for OpenAI, "Qwen3-32B" for SiliconFlow
 #' @param temperature Sampling temperature for model. Default: 0.2
 #' @param max_tokens Maximum tokens in response. Default: 8000
 #' @param rate_delay Delay in seconds between PubMed requests to avoid rate limiting.
@@ -104,9 +104,8 @@ analyze_literature_relevance <- function(results,
     has_embedding_api <- TRUE
   } else if (provider == "siliconflow") {
     api_base <- "https://api.siliconflow.cn/v1"
-    default_chat_model <- "Qwen/Qwen2.5-7B-Instruct"
-    default_embedding_model <- "BAAI/bge-large-zh-v1.5"
-    # Note: SiliconFlow may not have embedding API, we'll handle this gracefully
+    default_chat_model <- "Qwen3-32B"
+    default_embedding_model <- "Qwen3-Embedding-8B"
     has_embedding_api <- TRUE
   }
 
