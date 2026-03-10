@@ -24,7 +24,7 @@ or a data.frame with required columns (pathway_id, pathway_name, pathway_descrip
 
 \item{provider}{API provider. Required. Options: "openai", "siliconflow"}
 
-\item{model}{Model to use. If NULL, uses provider default: "gpt-4o" for OpenAI, "Qwen/Qwen2.5-7B-Instruct" for SiliconFlow}
+\item{model}{Model to use. If NULL, uses provider default: "gpt-4o" for OpenAI, "Qwen3-32B" for SiliconFlow}
 
 \item{temperature}{Sampling temperature for model. Default: 0.2}
 
@@ -77,7 +77,7 @@ result_df <- analyze_matrix_relevance(
   sample_source = "plasma",
   api_key = "sk-siliconflow-key",
   provider = "siliconflow",
-  model = "Qwen/Qwen2.5-14B-Instruct"
+  model = "Qwen3-72B"
 )
 }
 

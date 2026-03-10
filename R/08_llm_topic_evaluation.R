@@ -1,6 +1,6 @@
-#' @title Analyze Literature Relevance for Metabolic Pathways
+#' @title Analyze Topic Relevance for Metabolic Pathways
 #' @description
-#' Evaluate the literature support linking significant metabolic pathways to a
+#' Evaluate the topic relevance linking significant metabolic pathways to a
 #' specific research topic (e.g., cancer, pregnancy, diabetes) by querying PubMed.
 #' For each pathway, the function searches PubMed for co-occurrence with the
 #' research topic and returns supporting PMIDs. If no literature is found,
@@ -38,7 +38,7 @@
 #' @examples
 #' \dontrun{
 #' # Using OpenAI
-#' result_obj <- analyze_literature_relevance(
+#' result_obj <- analyze_topic_relevance(
 #'   results = my_results,
 #'   research_topic = "breast cancer",
 #'   api_key = "sk-openai-key",
@@ -46,7 +46,7 @@
 #' )
 #'
 #' # Using SiliconFlow with Qwen
-#' result_obj <- analyze_literature_relevance(
+#' result_obj <- analyze_topic_relevance(
 #'   results = my_results,
 #'   research_topic = "diabetes",
 #'   api_key = "sk-siliconflow-key",
@@ -64,7 +64,7 @@
 #' @importFrom methods slotNames is
 #'
 #' @export
-analyze_literature_relevance <- function(results,
+analyze_topic_relevance <- function(results,
                                          research_topic,
                                          api_key,
                                          provider,
