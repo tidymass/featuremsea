@@ -104,8 +104,8 @@ analyze_topic_relevance <- function(results,
     has_embedding_api <- TRUE
   } else if (provider == "siliconflow") {
     api_base <- "https://api.siliconflow.cn/v1"
-    default_chat_model <- "Qwen3-32B"
-    default_embedding_model <- "Qwen3-Embedding-8B"
+    default_chat_model <- "Qwen/Qwen2.5-7B-Instruct"
+    default_embedding_model <- "Qwen/Qwen3-Embedding-8B"
     has_embedding_api <- TRUE
   }
 
@@ -322,7 +322,7 @@ analyze_topic_relevance <- function(results,
       httr2::req_headers("Content-Type" = "application/json") |>
       httr2::req_timeout(seconds = 120)
 
-    body <- list(model = embedding_model, input = as.list(texts))
+    body <- list(model = embedding_model, input = texts)
 
     resp <- tryCatch(
       req |> httr2::req_body_json(body) |> httr2::req_perform(),
@@ -451,7 +451,7 @@ Output STRICTLY compact JSON:
     resp <- tryCatch(
       req |> httr2::req_body_json(body) |> httr2::req_perform(),
       error = function(e) {
-        warning("OpenAI API request failed: ", conditionMessage(e))
+        warning("LLM API request failed: ", conditionMessage(e))
         return(NULL)
       }
     )
