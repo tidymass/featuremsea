@@ -104,7 +104,7 @@ analyze_topic_relevance <- function(results,
     has_embedding_api <- TRUE
   } else if (provider == "siliconflow") {
     api_base <- "https://api.siliconflow.cn/v1"
-    default_chat_model <- "Qwen/Qwen2.5-7B-Instruct"
+    default_chat_model <- "Qwen/Qwen3-32B"
     default_embedding_model <- "Qwen/Qwen3-Embedding-8B"
     has_embedding_api <- TRUE
   }
