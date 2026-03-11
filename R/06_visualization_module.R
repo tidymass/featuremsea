@@ -10,6 +10,7 @@
 #' @param title Character. The main title of the plot.
 #'
 #' @return A \code{patchwork} combined \code{ggplot2} object.
+#' @import patchwork
 #' @export
 plot_fmsea_plot <- function(fmsea_obj, 
                             pathway_id, 
