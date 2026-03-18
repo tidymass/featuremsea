@@ -237,7 +237,7 @@ counts_equal <- function(a, b, id_col = "KEGG_ID") {
 #'   fdr_threshold = 0.01
 #' )
 #' }
-#' @noRd
+#' @export
 get_leading_edge_scores <- function(result_object, id_col = "KEGG_ID", fdr_threshold = 0.05) {
 
   # 检查输入
