@@ -88,8 +88,10 @@ get_fm_long_table <- function(significant_mfm, res_list, id_col, fdr_threshold =
 
 #' Calculate weighted annotation table (Fast Version)
 #'
-#' Optimized version using matrix operations.
-#' 
+#' Optimized version using matrix operations. Applies bonus weights based on
+#' feature-metabolite counts, with upper bound constraint to prevent scores
+#' from exceeding the row-wise maximum original score.
+#'
 #' @param original_annotation_table The base annotation matrix/df.
 #' @param feature_metabolite_count Data frame with counts.
 #' @noRd
@@ -147,7 +149,7 @@ get_weighting_annotation_table_fast <- function(original_annotation_table,
   # --- Step 4: Compute sparse bonuses for hit cells only ---
   bonus_vec <- counts_vec / denom[row_indices] * max_score_row[row_indices]
   
-  # --- Step 5: Apply sparse updates grouped by column ---
+  # --- Step 5: Apply sparse updates grouped by column with upper bound constraint ---
   split_idx <- split(seq_along(col_indices), col_indices)
   for (col_key in names(split_idx)) {
     idx <- split_idx[[col_key]]
@@ -155,7 +157,11 @@ get_weighting_annotation_table_fast <- function(original_annotation_table,
     rows <- row_indices[idx]
     addv <- bonus_vec[idx]
     col_j <- weighted_df[[cj]]
-    col_j[rows] <- col_j[rows] + addv
+
+    # Apply bonus but constrain by row-wise maximum score
+    new_values <- col_j[rows] + addv
+    col_j[rows] <- pmin(new_values, max_score_row[rows])
+
     weighted_df[[cj]] <- col_j
   }
   
