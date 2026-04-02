@@ -74,7 +74,7 @@ perform_fmsea_analysis <- function(
     dplyr::mutate(ranking_weight = abs(ranking_weight))
   
   # --- Step 3: Iterative enrichment analysis ---
-  if (verbose) message("Starting FMSEA iterative analysis...")
+  if (verbose) message("Performing featureMSEA analysis...")
   
   score_annotation_table <- annotation_table
   prev_feature_metabolite_count <- NULL
