@@ -15,7 +15,7 @@ perform_fmsea_analysis(
   perm.num = 1000,
   seed = 123,
   fdr.thr = 0.05,
-  max.iter.num = 10,
+  max.iter.num = 3,
   verbose = TRUE
 )
 }
@@ -41,7 +41,7 @@ perform_fmsea_analysis(
 
 \item{fdr.thr}{Numeric. FDR threshold for selecting significant modules. Default is 0.05.}
 
-\item{max.iter.num}{Integer. Maximum number of iterations for the algorithm. Default is 10.}
+\item{max.iter.num}{Integer. Maximum number of iterations for the algorithm. Default is 3.}
 
 \item{verbose}{Logical. Whether to print progress messages. Default is `TRUE`.}
 }

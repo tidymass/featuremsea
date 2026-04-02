@@ -18,7 +18,7 @@
 #' @param perm.num Integer. Number of permutations for significance testing. Default is 1000.
 #' @param seed Integer. Random seed for reproducibility. Default is 123.
 #' @param fdr.thr Numeric. FDR threshold for selecting significant modules. Default is 0.05.
-#' @param max.iter.num Integer. Maximum number of iterations for the algorithm. Default is 10.
+#' @param max.iter.num Integer. Maximum number of iterations for the algorithm. Default is 3.
 #' @param verbose Logical. Whether to print progress messages. Default is `TRUE`.
 #'
 #' @return A \code{featuremsea_object} containing the analysis results. 
@@ -41,7 +41,7 @@ perform_fmsea_analysis <- function(
     perm.num = 1000,            
     seed = 123,
     fdr.thr = 0.05,             
-    max.iter.num = 10,          
+    max.iter.num = 3,          
     verbose = TRUE
 ) {
   
