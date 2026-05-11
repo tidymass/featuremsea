@@ -102,9 +102,9 @@ get_weighting_annotation_table_fast <- function(original_annotation_table,
   weighted_df <- as.data.frame(original_annotation_table, stringsAsFactors = FALSE)
   n_row <- nrow(weighted_df)
   n_col <- ncol(weighted_df)
-  
-  # --- Step 1: Row-wise max score (streaming over columns, no dense copy) ---
-  max_score_row <- rep(-Inf, n_row)
+
+  # --- Step 1: Global max score (streaming over columns, no dense copy) ---
+  max_score_global <- -Inf
   for (j in seq_len(n_col)) {
     col_j <- weighted_df[[j]]
     if (!is.numeric(col_j)) {
@@ -112,10 +112,10 @@ get_weighting_annotation_table_fast <- function(original_annotation_table,
     }
     col_for_max <- col_j
     col_for_max[is.na(col_for_max)] <- -Inf
-    max_score_row <- pmax(max_score_row, col_for_max)
+    max_score_global <- max(max_score_global, col_for_max, na.rm = TRUE)
     weighted_df[[j]] <- col_j
   }
-  max_score_row[!is.finite(max_score_row)] <- 0
+  max_score_global <- if (!is.finite(max_score_global)) 0 else max_score_global
   
   # Early return if no updates are needed
   if (is.null(feature_metabolite_count) || nrow(feature_metabolite_count) == 0) {
@@ -147,8 +147,8 @@ get_weighting_annotation_table_fast <- function(original_annotation_table,
   denom <- ifelse(total_count_row == 0, 1, total_count_row)
   
   # --- Step 4: Compute sparse bonuses for hit cells only ---
-  bonus_vec <- counts_vec / denom[row_indices] * max_score_row[row_indices]
-  
+  bonus_vec <- counts_vec / denom[row_indices] * max_score_global
+
   # --- Step 5: Apply sparse updates grouped by column with upper bound constraint ---
   split_idx <- split(seq_along(col_indices), col_indices)
   for (col_key in names(split_idx)) {
@@ -158,9 +158,9 @@ get_weighting_annotation_table_fast <- function(original_annotation_table,
     addv <- bonus_vec[idx]
     col_j <- weighted_df[[cj]]
 
-    # Apply bonus but constrain by row-wise maximum score
+    # Apply bonus but constrain by global maximum score
     new_values <- col_j[rows] + addv
-    col_j[rows] <- pmin(new_values, max_score_row[rows])
+    col_j[rows] <- pmin(new_values, max_score_global)
 
     weighted_df[[cj]] <- col_j
   }
