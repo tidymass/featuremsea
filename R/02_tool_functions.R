@@ -103,7 +103,8 @@ get_weighting_annotation_table_fast <- function(original_annotation_table,
   n_row <- nrow(weighted_df)
   n_col <- ncol(weighted_df)
 
-  # --- Step 1: Global max score (streaming over columns, no dense copy) ---
+  # --- Step 1: Row-wise max score and global max score (streaming over columns, no dense copy) ---
+  max_score_row <- rep(-Inf, n_row)
   max_score_global <- -Inf
   for (j in seq_len(n_col)) {
     col_j <- weighted_df[[j]]
@@ -112,9 +113,11 @@ get_weighting_annotation_table_fast <- function(original_annotation_table,
     }
     col_for_max <- col_j
     col_for_max[is.na(col_for_max)] <- -Inf
+    max_score_row <- pmax(max_score_row, col_for_max)
     max_score_global <- max(max_score_global, col_for_max, na.rm = TRUE)
     weighted_df[[j]] <- col_j
   }
+  max_score_row[!is.finite(max_score_row)] <- 0
   max_score_global <- if (!is.finite(max_score_global)) 0 else max_score_global
   
   # Early return if no updates are needed
@@ -147,7 +150,7 @@ get_weighting_annotation_table_fast <- function(original_annotation_table,
   denom <- ifelse(total_count_row == 0, 1, total_count_row)
   
   # --- Step 4: Compute sparse bonuses for hit cells only ---
-  bonus_vec <- counts_vec / denom[row_indices] * max_score_global
+  bonus_vec <- counts_vec / denom[row_indices] * max_score_row[row_indices]
 
   # --- Step 5: Apply sparse updates grouped by column with upper bound constraint ---
   split_idx <- split(seq_along(col_indices), col_indices)
