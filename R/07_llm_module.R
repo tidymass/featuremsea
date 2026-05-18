@@ -193,6 +193,8 @@ Output STRICTLY compact JSON:
   
   # -------- Internal: Call LLM API --------
   .call_llm_api <- function(messages, model, temperature, max_tokens, api_key, api_base) {
+    uses_max_completion_tokens <- grepl("api.openai.com", api_base, fixed = TRUE) &&
+      grepl("^(gpt-5|o[0-9])", model)
     
     req <- httr2::request(paste0(api_base, "/chat/completions")) |>
       httr2::req_auth_bearer_token(api_key) |>
@@ -201,22 +203,37 @@ Output STRICTLY compact JSON:
     
     body <- list(
       model = model,
-      temperature = temperature,
-      max_tokens = max_tokens,
       messages = messages,
       response_format = list(type = "json_object")
     )
+
+    if (uses_max_completion_tokens) {
+      body$max_completion_tokens <- max_tokens
+    } else {
+      body$max_tokens <- max_tokens
+      body$temperature <- temperature
+    }
     
     resp <- tryCatch(
       {
         req |>
           httr2::req_body_json(body) |>
+          httr2::req_error(is_error = function(resp) FALSE) |>
           httr2::req_perform()
       },
       error = function(e) {
         stop("OpenAI API request failed: ", conditionMessage(e))
       }
     )
+
+    if (httr2::resp_is_error(resp)) {
+      body_text <- tryCatch(httr2::resp_body_string(resp), error = function(e) "")
+      stop(
+        "OpenAI API request failed: HTTP ",
+        httr2::resp_status(resp),
+        if (nchar(body_text) > 0) paste0(". Response body: ", body_text) else ""
+      )
+    }
     
     return(resp)
   }
