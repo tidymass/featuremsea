@@ -8,7 +8,7 @@
 #' @param sample_source Sample matrix type. Options: "urine", "plasma", "serum", "blood", "feces"
 #' @param api_key API key (OpenAI or SiliconFlow, depending on provider)
 #' @param provider API provider. Required. Options: "openai", "siliconflow"
-#' @param model Model to use. If NULL, uses provider default: "gpt-4o" for OpenAI, "Qwen3-32B" for SiliconFlow
+#' @param model Model to use. If NULL, uses provider default: "gpt-5.5" for OpenAI, "Qwen/Qwen3-32B" for SiliconFlow
 #' @param temperature Sampling temperature for model. Default: 0.2
 #' @param max_tokens Maximum tokens in response. Default: 8000
 #'
@@ -94,10 +94,10 @@ analyze_matrix_relevance <- function(results,
   # -------- Configure API based on provider --------
   if (provider == "openai") {
     api_base <- "https://api.openai.com/v1"
-    default_model <- "gpt-4o"
+    default_model <- "gpt-5.5"
   } else if (provider == "siliconflow") {
     api_base <- "https://api.siliconflow.cn/v1"
-    default_model <- "Qwen3-32B"
+    default_model <- "Qwen/Qwen3-32B"
   }
 
   # Use provided model or default
