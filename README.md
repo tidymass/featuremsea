@@ -82,7 +82,7 @@ results <- perform_fmsea_analysis(
   perm.num = 10000,
   seed = 123,
   fdr.thr = 0.05,
-  max.iter.num = 1,
+  max.iter.num = 3,
   verbose = TRUE
 )
 
