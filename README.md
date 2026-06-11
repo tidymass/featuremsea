@@ -81,7 +81,7 @@ results <- perform_fmsea_analysis(
   id.col = "KEGG_ID",
   perm.num = 10000,
   seed = 123,
-  fdr.thr = 0.1,
+  fdr.thr = 0.05,
   max.iter.num = 1,
   verbose = TRUE
 )
