@@ -1,6 +1,6 @@
-# featureMSEA <img src="man/figures/logo.png" align="right" alt="" width="120" />
+# FeatureMSEA <img src="man/figures/logo.png" align="right" alt="" width="120" />
 
-**featureMSEA** implements Feature-Based Metabolite Set Enrichment Analysis (fMSEA) — a method that runs metabolic pathway enrichment directly from mass spectrometry features, bypassing the need for complete metabolite identification. It is part of the [TidyMass](https://github.com/tidymass) ecosystem.
+**FeatureMSEA** implements Feature-Based Metabolite Set Enrichment Analysis — a method that performs functional interpretation directly from ranked mass spectrometry features, without requiring complete metabolite identification or an arbitrary significance threshold to preselect features. It is part of the [TidyMass](https://github.com/tidymass) ecosystem.
 
 ## Installation
 
@@ -12,92 +12,99 @@ remotes::install_gitlab("tidymass/metid")
 
 # Install featuremsea
 remotes::install_github("tidymass/featuremsea")
+
+library(masstools)
+library(massdataset)
+library(metid)
+library(featuremsea)
 ```
 
 
 ## Step 1 — Data Preparation
 
-Three datasets are required:
+The primary input for featureMSEA is a feature table with variable_id (unique identifier), m/z, rt (retention time in seconds), condition (phenotype-associated ranking statistic such as absolute signal-to-noise ratio (SNR), absolute log2 (fold change) (log2FC), and absolute correlation coefficient), polarity mode ("positive" or "negative"), and mean_intensity (average feature intensity across samples). The analysis additionally requires an MS1 metabolite database and a metabolite set database, which can be downloaded from TidyMass website.
 
 - **Feature table**: [Demo data](https://drive.google.com/file/d/1UwjizHDok-k9yYI407IZ_IF-YHkZjVjI/view?usp=drive_link)
 - **MS1 database** and **Metabolite set databases**: [Download here](https://www.tidymass.org/databases/)
 
 ---
 
-## Step 2 — Annotate Features
+## Step 2 — MS1-based Annotation
 
-`annotate_feature_table()` combines MS2 annotations with isotope/adduct grouping (MFC) to generate a scored annotation table.
 
 ```r
-annotation_table <- annotate_feature_table(
-  feature_table        = feature_table,
-  annotation_table_ms2 = annotation_table_ms2,
-  column               = "rp",          # "rp" (reverse-phase) or "hilic"
-  database_type        = "KEGG",        # "KEGG" or "HMDB"
-  metabolite_database  = kegg_database, # metid database object
-  ms1_match_ppm        = 15,
-  mfc_rt_tol           = 5,
-  isotope_number       = 3
-)
+annotation_table_final <-
+  annotate_feature_table(
+    feature_table = feature_table,
+    column = "rp",
+    metabolite_database = kegg_compound_ms1, # use downloaded ms1 database
+    database_type = "KEGG", # select database type :KEGG or HMDB
+    ms1_match_ppm = 15, 
+    mfc_rt_tol = 10,
+    isotope_number = 3
+  )
 ```
 
 ---
 
-## Step 3 — Process Annotation Table
-
-`process_annotation_table()` reshapes the scored annotation into a feature × metabolite matrix and extracts the ranking weights used by the enrichment algorithm.
+## Step 3 — Remove redundant annotations
 
 ```r
-processed <- process_annotation_table(
-  annotation_table_final2 = annotation_table,
-  database_type            = "KEGG"   # must match Step 2
+annotation_table_final2 =
+  featuremsea::remove_redundancy(
+    annotation_table = annotation_table_final)
+
+results <- process_annotation_table(
+  annotation_table_final2 = annotation_table_final2,
+  database_type = "KEGG" # KEGG or HMDB here
 )
 
-score_matrix   <- processed$original_score_annotation  # features × metabolites
-ranking_table  <- processed$ranking_table              # features ranked by condition
+ranking_table <- results$ranking_table
+annotation_table <- results$original_score_annotation
+
 ```
 
 ---
 
-## Step 4 — Run fMSEA Analysis
+## Step 4 — FeatureMSEA Analysis
 
-`perform_fmsea_analysis()` runs the iterative enrichment algorithm against a pathway database.
 
 ```r
 # Supported databases: KEGG, SMPDB, IMETPD, Reactome, Wikipathway
-fmsea_result <- perform_fmsea_analysis(
-  pathway_database    = kegg_pathway_db,  # S4 pathway database object
-  annotation_table    = score_matrix,
-  ranking_table       = ranking_table,
-  threads             = 4,
-  min.compounds.num   = 15,
-  max.compounds.num   = 300,
-  id.col              = "KEGG_ID",
-  perm.num            = 1000,
-  seed                = 123,
-  fdr.thr             = 0.05,
-  max.iter.num        = 3,
-  verbose             = TRUE
+results <- perform_fmsea_analysis(
+  pathway_database, # use downloaded metabolite set database
+  annotation_table,         
+  ranking_table,
+  threads = 6,
+  min.compounds.num = 15,
+  max.compounds.num = 300,
+  id.col = "KEGG_ID",
+  perm.num = 10000,
+  seed = 123,
+  fdr.thr = 0.1,
+  max.iter.num = 1,
+  verbose = TRUE
 )
 
+
 # Significant pathways are in:
-fmsea_result@significant_modules
+results@significant_modules
 ```
 
 ---
 
-## Step 5 — LLM-Assisted Evaluation (Optional)
+## Step 5 — LLM-assisted interpretation (Optional)
 
-### 5a. Matrix Confidence Scoring
+### 5a. Matrix confidence assessment
 
 Assesses how reliably metabolites in your sample matrix (urine, plasma, etc.) indicate each pathway's activity.
 
 ```r
 # Using OpenAI
 fmsea_result <- analyze_matrix_relevance(
-  results       = fmsea_result,
-  sample_source = "urine",          # "urine", "plasma", "serum", "blood", "feces"
-  api_key       = "sk-openai-xxx",
+  results,
+  sample_source = "urine",          # matrix source of features
+  api_key       = "sk-openai-xxx",  # OpenAI API key
   provider      = "openai"
 )
 
@@ -110,12 +117,12 @@ fmsea_result <- analyze_matrix_relevance(
 )
 ```
 
-Adds columns to `significant_modules`:
+Added columns to `significant_modules`:
 - `matrix_confidence_score` — integer: 0 / 25 / 50 / 75 / 100
 - `matrix_confidence_reason` — brief explanation
 - `matrix_source` — the sample source used
 
-### 5b. Topic Relevance via PubMed + LLM
+### 5b. Topic relevance assessment
 
 Links significant pathways to a research topic using PubMed literature search and embedding-based re-ranking.
 
@@ -130,7 +137,7 @@ fmsea_result <- analyze_topic_relevance(
 )
 ```
 
-Adds columns to `significant_modules`:
+Added columns to `significant_modules`:
 - `literature_pmids_exact` — PMIDs from exact PubMed search
 - `literature_pmids_fuzzy` — PMIDs from fuzzy search filtered by embedding similarity
 - `topic_confidence_score` — LLM score (0/25/50/75/100) when no literature found
@@ -159,8 +166,5 @@ The plot shows the enrichment score curve, ranked feature hits, annotation weigh
 
 If you use featureMSEA in your research, please cite:
 
-> Shen X, Liu Y, et al. featureMSEA: Feature-Based Metabolite Set Enrichment Analysis. *TidyMass Project* (2026). <https://github.com/tidymass/featuremsea>
+> featureMSEA: FeatureMSEA: Metabolic Feature-based Metabolite Set Enrichment Analysis
 
-## Issues
-
-Please report bugs at <https://github.com/tidymass/featuremsea/issues>.
