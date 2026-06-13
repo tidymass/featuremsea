@@ -1,6 +1,6 @@
 # FeatureMSEA <img src="man/figures/logo.png" align="right" alt="" width="120" />
 
-**FeatureMSEA** implements Feature-Based Metabolite Set Enrichment Analysis — a method that performs functional interpretation directly from ranked mass spectrometry features, without requiring complete metabolite identification or an arbitrary significance threshold to preselect features. It is part of the [TidyMass](https://github.com/tidymass) ecosystem.
+**FeatureMSEA** implements Feature-Based Metabolite Set Enrichment Analysis — a method that performs functional interpretation directly from ranked mass spectrometry features, without requiring complete metabolite identification or an arbitrary significance threshold to preselect features.
 
 ## Installation
 
@@ -166,5 +166,5 @@ The plot shows the enrichment score curve, ranked feature hits, annotation weigh
 
 If you use featureMSEA in your research, please cite:
 
-> featureMSEA: FeatureMSEA: Metabolic Feature-based Metabolite Set Enrichment Analysis
+> FeatureMSEA: Metabolic Feature-based Metabolite Set Enrichment Analysis
 
