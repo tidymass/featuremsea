@@ -57,6 +57,50 @@
 #'
 #' @export
 
+# Cache for theoretical isotope patterns. The pattern (m/z, relative intensity,
+# isotope label of [M+1], [M+2], ...) depends only on (formula, adduct,
+# max.isotope) and NOT on the observed mz/rt/intensity, so it is computed once
+# per unique key via Rdisop and reused across every feature that shares the same
+# compound/adduct. The cache lives in the package namespace and persists across
+# calls, e.g. within a long-running Shiny session, and is per-process under
+# parallel backends. This is a pure speed-up: results are unchanged.
+.iso_pattern_cache <- new.env(parent = emptyenv())
+
+.compute_isotope_pattern <- function(formula, adduct, max.isotope = 3) {
+  key <- paste(formula, adduct, max.isotope, sep = "\r")
+  cached <- get0(key, envir = .iso_pattern_cache, inherits = FALSE)
+  if (!is.null(cached)) {
+    return(cached)
+  }
+
+  formula1 <- masstools::sum_formula(formula = formula, adduct = adduct)
+  ###should be fix latter
+  if (is.na(formula1)) {
+    formula1 <- formula
+  }
+
+  molecule <- Rdisop::getMolecule(
+    formula = formula1,
+    # z = charge,
+    maxisotopes = max.isotope + 1
+  )
+
+  isotopes <- t(Rdisop::getIsotope(molecule = molecule)[[1]])
+
+  rownames(isotopes) <-
+    c("[M]", paste("[M", "+", c(1:(nrow(
+      isotopes
+    ) - 1)), "]", sep = ""))
+
+  isotopes <- data.frame(isotopes, rownames(isotopes), stringsAsFactors = FALSE)
+  colnames(isotopes) <- c("mz", "intensity", "isotope")
+
+  isotopes <- isotopes[-1, , drop = FALSE]
+
+  assign(key, isotopes, envir = .iso_pattern_cache)
+  isotopes
+}
+
 annotate_isotope <-
   function(formula = "C9H14N2O12P2",
            adduct = "M-H",
@@ -73,31 +117,16 @@ annotate_isotope <-
            mz.tol = 15,
            int.tol = 0.3,
            max.isotope = 3) {
-    formula1 <-
-      masstools::sum_formula(formula = formula, adduct = adduct)
-    ###should be fix latter
-    if (is.na(formula1)) {
-      formula1 <- formula
-    }
-    
-    molecule <- Rdisop::getMolecule(
-      formula = formula1,
-      # z = charge,
-      maxisotopes = max.isotope + 1
+    ## theoretical isotope pattern depends only on (formula, adduct,
+    ## max.isotope); compute once per unique key and reuse (see cache above).
+    isotopes <- .compute_isotope_pattern(
+      formula = formula,
+      adduct = adduct,
+      max.isotope = max.isotope
     )
-    
-    isotopes <- t(Rdisop::getIsotope(molecule = molecule)[[1]])
-    
-    rownames(isotopes) <-
-      c("[M]", paste("[M", "+", c(1:(nrow(
-        isotopes
-      ) - 1)), "]", sep = ""))
-    
-    isotopes <- data.frame(isotopes, rownames(isotopes), stringsAsFactors = FALSE)
-    colnames(isotopes) <- c("mz", "intensity", "isotope")
     accurate.mz <- mz
-    
-    isotopes <- isotopes[-1, , drop = FALSE]
+
+    ## scale to the observed monoisotopic intensity (feature-specific, not cached)
     isotopes$intensity <-
       isotopes$intensity * mean_intensity
     isotopes$rt <- rt

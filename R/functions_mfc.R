@@ -25,6 +25,7 @@
 #'
 #' @importFrom purrr map2
 #' @importFrom dplyr %>%
+#' @importFrom data.table rbindlist
 #' @export
 group_peaks_rt <- function(rt, rt.tol = 10) {
   rt_class <-
@@ -53,7 +54,8 @@ group_peaks_rt <- function(rt, rt.tol = 10) {
                    stringsAsFactors = FALSE)
       }
     ) %>%
-    do.call(rbind, .)
+    data.table::rbindlist() %>%
+    as.data.frame()
   rownames(rt_class) <- NULL
   return(rt_class)
 }

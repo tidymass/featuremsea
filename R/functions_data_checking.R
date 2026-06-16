@@ -46,22 +46,19 @@ check_feature_table <-
       stop("feature_table must be a data.frame.")
     }
     
-    # Check number of columns
-    if (ncol(feature_table) != 6) {
-      stop("feature_table must have exactly 5 columns.")
-    }
-    
-    # Expected column names
+    # Required column names. Only the presence of these columns is required;
+    # column order is irrelevant and additional columns are allowed.
     expected_names <- c("variable_id",
                         "mz",
                         "rt",
                         "condition",
                         "polarity",
                         "mean_intensity")
-    if (!all(expected_names == colnames(feature_table))) {
+    missing_names <- setdiff(expected_names, colnames(feature_table))
+    if (length(missing_names) > 0) {
       stop(paste0(
-        "feature_table columns must be named: ",
-        paste(expected_names, collapse = ", ")
+        "feature_table is missing required column(s): ",
+        paste(missing_names, collapse = ", ")
       ))
     }
     

@@ -91,6 +91,18 @@ results <- perform_fmsea_analysis(
 results@significant_modules
 ```
 
+**Key parameters**:
+- `pathway_database` — the metabolite set database object (downloaded in Step 1). Its `database_info$source` must be one of `"KEGG"`, `"SMPDB"`, `"IMETPD"`, `"Reactome"`, `"Wikipathway"`, and determines how it is parsed.
+- `annotation_table` / `ranking_table` — outputs from Step 3 (`process_annotation_table()`); link features to candidate metabolites and to the ranking statistic used for enrichment, respectively.
+- `threads` — number of CPU threads for parallel computing. Default `NULL` runs serially; increase for large feature tables.
+- `min.compounds.num` / `max.compounds.num` — pathway size filter: pathways with fewer than `min.compounds.num` or more than `max.compounds.num` annotated compounds are excluded from testing (defaults: 15 / 300).
+- `id.col` — the compound ID column (in `annotation_table`/`pathway_database`) used to match features to pathway members, e.g. `"KEGG_ID"` for KEGG, `"HMDB_ID"` for HMDB-based databases.
+- `perm.num` — number of permutations used to build the null distribution for significance testing (default 1000; higher values give more stable p-values at the cost of runtime).
+- `seed` — random seed for the permutation test, for reproducible results.
+- `fdr.thr` — FDR threshold for calling a pathway significant; pathways with FDR below this value are kept in `significant_modules` (default 0.05).
+- `max.iter.num` — featureMSEA re-weights feature-metabolite annotations based on significant pathways and re-runs enrichment iteratively; this caps the number of iterations (default 3).
+- `verbose` — print progress messages during the run.
+
 ---
 
 ## Step 5 — LLM-assisted interpretation (Optional)

@@ -70,6 +70,17 @@ annotate_feature_table <-
       stop("feature_table is required.")
     } else{
       check_feature_table(feature_table)
+      ## check_feature_table only requires these columns to be present (any
+      ## order, extra columns allowed). Reduce to the canonical columns in
+      ## canonical order so the downstream positional logic (e.g. the isotope
+      ## cbind that assigns fixed colnames) is independent of the input layout.
+      feature_table <-
+        feature_table[, c("variable_id",
+                          "mz",
+                          "rt",
+                          "condition",
+                          "polarity",
+                          "mean_intensity")]
     }
     
     ######annotation_table_ms2 is optional
@@ -290,8 +301,17 @@ annotate_feature_table <-
       dplyr::filter(polarity == "negative")
     
     ###positive
-    future::plan(multisession, workers = 8)
-    
+    ## Respect a parallel backend configured by the caller (e.g. a Shiny app
+    ## that runs `future::plan(future::multicore, workers = N)` once at startup).
+    ## Only fall back to spawning workers if the caller left the default
+    ## sequential plan, and restore it afterwards so we don't leak global state.
+    current_plan <- future::plan()
+    if (inherits(current_plan, "sequential")) {
+      future::plan(future::multisession,
+                   workers = max(1, future::availableCores() - 1))
+      on.exit(future::plan(current_plan), add = TRUE)
+    }
+
     message("Isotope annotation for feature table positive mode...\n")
     
     if (nrow(annotation_table_final_pos) == 0) {
@@ -369,11 +389,20 @@ annotate_feature_table <-
               temp_iso %>%
                 dplyr::select(colnames(annotation_table_final_pos))
             },
-            .progress = TRUE
+            .progress = TRUE,
+            .options = furrr::furrr_options(
+              packages = c("dplyr", "data.table", "featuremsea"),
+              globals = TRUE
+            )
           ) %>%
-          do.call(rbind, .) %>%
+          {data.table::rbindlist(., fill = TRUE)} %>%
           as.data.frame()
       )
+      ## rbindlist returns a 0-column data.table when nothing matched; restore
+      ## the original NULL semantics so the downstream rbind() is a no-op.
+      if (ncol(isotope_pos) == 0L) {
+        isotope_pos <- NULL
+      }
     }
     
     # #############debug
@@ -473,12 +502,20 @@ annotate_feature_table <-
             temp_iso %>%
               dplyr::select(colnames(annotation_table_final_neg))
           },
-          .progress = TRUE
+          .progress = TRUE,
+          .options = furrr::furrr_options(
+            packages = c("dplyr", "data.table", "featuremsea"),
+            globals = TRUE
+          )
         ) %>%
-        do.call(rbind, .) %>%
+        {data.table::rbindlist(., fill = TRUE)} %>%
         as.data.frame()
     )
-    
+    ## restore original NULL semantics when no isotope peaks matched
+    if (ncol(isotope_neg) == 0L) {
+      isotope_neg <- NULL
+    }
+
     annotation_table_final_neg <-
       rbind(annotation_table_final_neg, isotope_neg) %>%
       as.data.frame() %>%
@@ -652,53 +689,44 @@ score_annotation_table <- function(annotation_table, mfc_rt_tol = 10) {
   }
   
   annotation_table <-
-    unique(annotation_table$Lab.ID) %>%
+    # split once by Lab.ID instead of scanning the whole table once per Lab.ID
+    # (was O(n_labid * n_rows) via repeated dplyr::filter); the final arrange()
+    # below makes the result independent of group order, so output is unchanged.
+    split(annotation_table, annotation_table$Lab.ID) %>%
     furrr::future_map(
-      .f = function(temp_id) {
-        # 1. 筛选数据
-        x <- annotation_table %>%
-          dplyr::filter(Lab.ID == temp_id) %>%
+      .f = function(x) {
+        # 1. 排序
+        x <- x %>%
           dplyr::arrange(rt)
-        
+
         # 2. 计算 RT 分组 (明确调用 featuremsea)
         rt_class <- featuremsea::group_peaks_rt(
-          rt = x$rt, 
+          rt = x$rt,
           rt.tol = mfc_rt_tol
         ) %>%
           dplyr::arrange(rt)
-        
-        # 3. 【补全】构建 Cluster ID
-        # 这里的逻辑是：Lab.ID + RT分类
-        rt_cluster_id <- paste(x$Lab.ID[1], rt_class$class, sep = "@")
-        
-        x$metabolite_feature_cluster <- rt_cluster_id
-        
-        # 4. 【补全】对每个 Cluster 进行打分 (score_mfc)
-        # 注意：这里内部通常不需要再并行，使用 purrr::map 即可
+
+        # 3. 构建 Cluster ID: Lab.ID + RT分类
+        x$metabolite_feature_cluster <- paste(x$Lab.ID[1], rt_class$class, sep = "@")
+
+        # 4. 对每个 Cluster 进行打分 (score_mfc)
         x_scored <- unique(x$metabolite_feature_cluster) %>%
           purrr::map(function(y) {
             z <- x[x$metabolite_feature_cluster == y, , drop = FALSE]
-            
-            # 明确调用 featuremsea::score_mfc (假设该函数也在这个包里)
-            # 如果 score_mfc 是当前环境的函数，则直接用
-            score <- featuremsea::score_mfc(z) 
-            
-            z$score <- score
-            return(z)
-          }) %>%
-          do.call(rbind, .) %>%
+            z$score <- featuremsea::score_mfc(z)
+            z
+          })
+
+        data.table::rbindlist(x_scored) %>%
           as.data.frame()
-        
-        return(x_scored)
       },
-      # 5. 保留你修改的 options，这很重要
       .options = furrr::furrr_options(
-        packages = c("dplyr", "featuremsea"), # 确保加载了依赖包
+        packages = c("dplyr", "data.table", "featuremsea"), # 确保加载了依赖包
         globals = TRUE
       ),
       .progress = TRUE
     ) %>%
-    do.call(rbind, .) %>%
+    data.table::rbindlist() %>%
     as.data.frame()
   
   # 6. 【补全】最后的排序
