@@ -36,8 +36,11 @@ the full iterative procedure. Default is 100.}
 \item{inner.perm.num}{Integer. Number of inner permutations per pathway used
 for FDR-based selection within each iteration. Default is 1000.}
 
-\item{threads}{Integer. Number of cores used to parallelize outer
-permutations. Default is \code{NULL} (all cores minus one).}
+\item{threads}{Integer. Number of cores. The observed run is parallelized
+over pathways. Null runs are parallelized over outer permutations when
+\code{outer.perm.num >= threads}; otherwise they run one at a time, each
+parallelized over pathways. Results do not depend on this choice. Default
+is \code{NULL} (all cores minus one).}
 
 \item{min.compounds.num, max.compounds.num}{Pathway size limits.}
 

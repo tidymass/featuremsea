@@ -48,8 +48,11 @@
 #'   the full iterative procedure. Default is 100.
 #' @param inner.perm.num Integer. Number of inner permutations per pathway used
 #'   for FDR-based selection within each iteration. Default is 1000.
-#' @param threads Integer. Number of cores used to parallelize outer
-#'   permutations. Default is \code{NULL} (all cores minus one).
+#' @param threads Integer. Number of cores. The observed run is parallelized
+#'   over pathways. Null runs are parallelized over outer permutations when
+#'   \code{outer.perm.num >= threads}; otherwise they run one at a time, each
+#'   parallelized over pathways. Results do not depend on this choice. Default
+#'   is \code{NULL} (all cores minus one).
 #' @param min.compounds.num,max.compounds.num Pathway size limits.
 #' @param id.col Character. Compound ID column. Default is "KEGG_ID".
 #' @param seed Integer. Random seed. Default is 123.
@@ -129,8 +132,26 @@ perform_fmsea_iterative_permutation <- function(
             "the permutation shuffles rows, not unique features.")
   }
 
-  # --- Step 3: Observed run ---
-  if (verbose) message("Running observed iterative fMSEA...")
+  # --- Step 3: Parallel configuration ---
+  total_cores <- parallel::detectCores()
+  if (is.null(threads) || threads >= total_cores) {
+    threads <- max(1L, total_cores - 1L)
+  }
+  threads <- as.integer(threads)
+
+  # Parallelize over outer permutations when there are enough of them to keep
+  # all cores busy; otherwise run them one by one and parallelize over pathways
+  # inside each run (as perform_fmsea_analysis does).
+  outer_parallel <- threads > 1L && outer.perm.num >= threads
+
+  doParallel::registerDoParallel(cores = threads)
+  on.exit(doParallel::stopImplicitCluster(), add = TRUE)
+
+  # --- Step 4: Observed run (pathway-level parallel) ---
+  if (verbose) {
+    message(sprintf("Running observed iterative fMSEA (%d pathways, %d core(s))...",
+                    n_pw, threads))
+  }
   t_obs <- system.time(
     obs <- .itperm_run_iterations(
       ids_list         = pw$ids_list,
@@ -142,56 +163,40 @@ perform_fmsea_iterative_permutation <- function(
       seed             = seed,
       fdr_thr          = fdr.thr,
       max_iter         = max.iter.num,
-      keep_first       = TRUE
+      keep_first       = TRUE,
+      n_cores          = threads,
+      verbose          = verbose
     )
   )[["elapsed"]]
 
   ES_obs <- .itperm_extract(obs$res_list, "ES")
 
-  # --- Step 4: Pre-generate outer permutations (independent of core count) ---
+  # --- Step 5: Pre-generate outer permutations (independent of core count) ---
   set.seed(seed)
   n_rank <- nrow(ranking_table_calc)
   perm_idx <- lapply(seq_len(outer.perm.num), function(b) sample.int(n_rank))
-
-  total_cores <- parallel::detectCores()
-  if (is.null(threads) || threads >= total_cores) {
-    threads <- max(1L, total_cores - 1L)
-  }
 
   if (verbose) {
     message(sprintf(
       "Observed run: %d iteration(s), %d significant pathway(s) in iteration 1, %.1f s.",
       obs$iterations_used, obs$n_sig_iter1, t_obs
     ))
+    if (outer_parallel) {
+      # A serial run costs roughly threads x the parallel observed run.
+      est <- t_obs * threads * ceiling(outer.perm.num / threads)
+      mode_txt <- sprintf("parallel over permutations on %d core(s)", threads)
+    } else {
+      est <- t_obs * outer.perm.num
+      mode_txt <- sprintf("one at a time, parallel over pathways on %d core(s)", threads)
+    }
     message(sprintf(
-      "Running %d outer permutations on %d core(s); estimated time ~%.1f min.",
-      outer.perm.num, threads, t_obs * outer.perm.num / threads / 60
+      "Running %d outer permutations (%s); upper-bound estimate ~%.1f min.",
+      outer.perm.num, mode_txt, est / 60
     ))
   }
 
-  # --- Step 5: Null runs (full iterative procedure per permuted ranking) ---
-  doParallel::registerDoParallel(cores = threads)
-  on.exit(doParallel::stopImplicitCluster(), add = TRUE)
-
-  null_out <- foreach::foreach(
-    b = seq_len(outer.perm.num),
-    .packages = c("dplyr", "stringr"),
-    .export   = c(
-      ".itperm_run_iterations",
-      ".itperm_extract",
-      "annotation_long_fast_base",
-      "build_ranking_index",
-      "precompute_mMSEA_static",
-      "compute_ES_from_mapping",
-      "get_mMSEA_results_indexed_fast",
-      "compute_permutations_cpp",
-      "get_significant_mfm",
-      "get_fm_long_table",
-      "get_weighting_annotation_table_fast",
-      "counts_equal",
-      "canon_counts"
-    )
-  ) %dopar% {
+  # --- Step 6: Null runs (full iterative procedure per permuted ranking) ---
+  run_null <- function(b, n_cores) {
     rk_perm <- ranking_table_calc
     rk_perm$ranking_weight <- ranking_table_calc$ranking_weight[perm_idx[[b]]]
 
@@ -205,7 +210,9 @@ perform_fmsea_iterative_permutation <- function(
       seed             = seed + b * n_pw,
       fdr_thr          = fdr.thr,
       max_iter         = max.iter.num,
-      keep_first       = FALSE
+      keep_first       = FALSE,
+      n_cores          = n_cores,
+      verbose          = FALSE
     )
 
     list(
@@ -215,6 +222,25 @@ perform_fmsea_iterative_permutation <- function(
       n_sig_iter1     = run_b$n_sig_iter1,
       n_sig_final     = run_b$n_sig_final
     )
+  }
+
+  if (outer_parallel) {
+    null_out <- foreach::foreach(
+      b = seq_len(outer.perm.num),
+      .packages = c("dplyr", "stringr"),
+      .export   = .itperm_export_names()
+    ) %dopar% {
+      run_null(b, n_cores = 1L)
+    }
+  } else {
+    null_out <- vector("list", outer.perm.num)
+    for (b in seq_len(outer.perm.num)) {
+      t_b <- system.time(null_out[[b]] <- run_null(b, n_cores = threads))[["elapsed"]]
+      if (verbose) {
+        message(sprintf("  Outer permutation %d/%d: %d iteration(s), %.1f s.",
+                        b, outer.perm.num, null_out[[b]]$iterations_used, t_b))
+      }
+    }
   }
 
   null_ES <- do.call(rbind, lapply(null_out, `[[`, "ES"))
@@ -230,7 +256,7 @@ perform_fmsea_iterative_permutation <- function(
     stringsAsFactors = FALSE
   )
 
-  # --- Step 6: Iteration-aware p-values ---
+  # --- Step 7: Iteration-aware p-values ---
   n_null_valid <- colSums(!is.na(null_ES))
   p_iter <- vapply(seq_len(n_pw), function(k) {
     if (is.na(ES_obs[k]) || n_null_valid[k] == 0L) return(NA_real_)
@@ -363,7 +389,9 @@ perform_fmsea_iterative_permutation <- function(
                                    seed,
                                    fdr_thr,
                                    max_iter,
-                                   keep_first = FALSE) {
+                                   keep_first = FALSE,
+                                   n_cores = 1L,
+                                   verbose = FALSE) {
   base_rk <- ranking_table %>%
     dplyr::distinct(variable_id, ranking_weight) %>%
     dplyr::arrange(dplyr::desc(ranking_weight))
@@ -387,7 +415,7 @@ perform_fmsea_iterative_permutation <- function(
       normalize_global = TRUE
     )
 
-    res_list <- lapply(seq_along(ids_list), function(i) {
+    run_one <- function(i) {
       get_mMSEA_results_indexed_fast(
         pathway_ids_vec = ids_list[[i]],
         annotation_long = annotation_long,
@@ -397,7 +425,21 @@ perform_fmsea_iterative_permutation <- function(
         seed            = seed + i,
         return_perm     = FALSE
       )
-    })
+    }
+
+    # Pathway-level parallelism uses the doParallel backend registered by the
+    # caller; per-pathway seeds keep results identical to the serial path.
+    res_list <- if (n_cores > 1L) {
+      foreach::foreach(
+        i = seq_along(ids_list),
+        .packages = c("dplyr", "stringr"),
+        .export   = .itperm_export_names()
+      ) %dopar% {
+        run_one(i)
+      }
+    } else {
+      lapply(seq_along(ids_list), run_one)
+    }
     names(res_list) <- mfm_ids
 
     if (iter == 1L && keep_first) first_res_list <- res_list
@@ -405,6 +447,9 @@ perform_fmsea_iterative_permutation <- function(
     significant_mfm <- get_significant_mfm(res_list, fdr_threshold = fdr_thr)
     n_sig_final <- nrow(significant_mfm)
     if (iter == 1L) n_sig_iter1 <- n_sig_final
+    if (verbose) {
+      message(sprintf("  Iteration %d: %d significant pathway(s).", iter, n_sig_final))
+    }
 
     if (n_sig_final == 0L) break
 
@@ -436,6 +481,26 @@ perform_fmsea_iterative_permutation <- function(
     converged       = converged,
     n_sig_iter1     = as.integer(n_sig_iter1),
     n_sig_final     = as.integer(n_sig_final)
+  )
+}
+
+# Internal functions needed on PSOCK workers (no-op for forked workers).
+.itperm_export_names <- function() {
+  c(
+    ".itperm_run_iterations",
+    ".itperm_extract",
+    ".itperm_export_names",
+    "annotation_long_fast_base",
+    "build_ranking_index",
+    "precompute_mMSEA_static",
+    "compute_ES_from_mapping",
+    "get_mMSEA_results_indexed_fast",
+    "compute_permutations_cpp",
+    "get_significant_mfm",
+    "get_fm_long_table",
+    "get_weighting_annotation_table_fast",
+    "counts_equal",
+    "canon_counts"
   )
 }
 
