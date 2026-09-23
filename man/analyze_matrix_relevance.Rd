@@ -24,7 +24,7 @@ or a data.frame with required columns (pathway_id, pathway_name, pathway_descrip
 
 \item{provider}{API provider. Required. Options: "openai", "siliconflow"}
 
-\item{model}{Model to use. If NULL, uses provider default: "gpt-4o" for OpenAI, "Qwen3-32B" for SiliconFlow}
+\item{model}{Model to use. If NULL, uses provider default: "gpt-5.5" for OpenAI, "Qwen/Qwen3-32B" for SiliconFlow}
 
 \item{temperature}{Sampling temperature for model. Default: 0.2}
 

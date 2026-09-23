@@ -39,7 +39,7 @@ Without it, requests are limited to 3/second; with it, 10/second.}
 PMIDs after embedding re-ranking. Candidates below this threshold are discarded.
 Default: 0.6}
 
-\item{model}{Model to use. If NULL, uses provider default: "gpt-4o" for OpenAI, "Qwen3-32B" for SiliconFlow}
+\item{model}{Model to use. If NULL, uses provider default: "gpt-5.5" for OpenAI, "Qwen3-32B" for SiliconFlow}
 
 \item{temperature}{Sampling temperature for model. Default: 0.2}
 
