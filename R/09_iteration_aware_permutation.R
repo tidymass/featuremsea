@@ -225,12 +225,27 @@ perform_fmsea_iterative_permutation <- function(
   }
 
   if (outer_parallel) {
-    null_out <- foreach::foreach(
-      b = seq_len(outer.perm.num),
-      .packages = c("dplyr", "stringr"),
-      .export   = .itperm_export_names()
-    ) %dopar% {
-      run_null(b, n_cores = 1L)
+    # Run in batches so progress can be reported; several permutations per
+    # core per batch evens out runs that stop after 1 vs. max.iter.num iterations.
+    batch_size <- threads * 5L
+    batches <- split(seq_len(outer.perm.num), ceiling(seq_len(outer.perm.num) / batch_size))
+    null_out <- vector("list", outer.perm.num)
+    t_start <- Sys.time()
+    for (bt in batches) {
+      null_out[bt] <- foreach::foreach(
+        b = bt,
+        .packages = c("dplyr", "stringr"),
+        .export   = .itperm_export_names()
+      ) %dopar% {
+        run_null(b, n_cores = 1L)
+      }
+      if (verbose) {
+        done <- max(bt)
+        elapsed <- as.numeric(difftime(Sys.time(), t_start, units = "mins"))
+        message(sprintf("  Outer permutations %d/%d done, %.1f min elapsed, ~%.1f min remaining.",
+                        done, outer.perm.num, elapsed,
+                        elapsed / done * (outer.perm.num - done)))
+      }
     }
   } else {
     null_out <- vector("list", outer.perm.num)

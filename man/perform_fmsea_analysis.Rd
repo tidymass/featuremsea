@@ -15,6 +15,8 @@ perform_fmsea_analysis(
   perm.num = 1000,
   seed = 123,
   fdr.thr = 0.05,
+  min.matched.features.num = 15,
+  min.leading.edge.num = 2,
   max.iter.num = 3,
   verbose = TRUE
 )
@@ -41,6 +43,12 @@ perform_fmsea_analysis(
 
 \item{fdr.thr}{Numeric. FDR threshold for selecting significant modules. Default is 0.05.}
 
+\item{min.matched.features.num}{Integer. Post hoc filter: minimum number of features
+matched to a significant module for it to be reported. Default is 15. Set to 0 to disable.}
+
+\item{min.leading.edge.num}{Integer. Post hoc filter: minimum number of features in the
+leading edge of a significant module for it to be reported. Default is 2. Set to 0 to disable.}
+
 \item{max.iter.num}{Integer. Maximum number of iterations for the algorithm. Default is 3.}
 
 \item{verbose}{Logical. Whether to print progress messages. Default is `TRUE`.}
@@ -48,7 +56,8 @@ perform_fmsea_analysis(
 \value{
 A \code{featuremsea_object} containing the analysis results. 
   The \code{significant_modules} slot will contain columns: 
-  \code{pathway_id}, \code{pathway_name}, \code{pathway_description}, etc.
+  \code{pathway_id}, \code{pathway_name}, \code{pathway_description}, etc.,
+  together with \code{n_matched_features} and \code{n_leading_edge_features}.
 }
 \description{
 This function performs an iterative fMSEA analysis. It iteratively updates the
@@ -58,6 +67,13 @@ until convergence or a maximum number of iterations is reached.
 \details{
 It automatically detects the source of the provided pathway database object.
 Valid sources are strictly: "KEGG", "SMPDB", "IMETPD", "Reactome", "Wikipathway".
+
+The two post hoc filters (\code{min.matched.features.num} and
+  \code{min.leading.edge.num}) are applied only to the significant modules of the
+  final iteration, after the iterative analysis is complete. They do not affect the
+  enrichment calculation, the annotation re-weighting, the permutation test or the
+  FDR estimation. Modules removed by these filters are recorded in
+  \code{process_info$post_hoc_filter$removed_modules}.
 }
 \author{
 Xiaotao Shen \email{xiaotao.shen@outlook.com}

@@ -82,6 +82,8 @@ results <- perform_fmsea_analysis(
   perm.num = 10000,
   seed = 123,
   fdr.thr = 0.05,
+  min.matched.features.num = 15,
+  min.leading.edge.num = 2,
   max.iter.num = 3,
   verbose = TRUE
 )
@@ -100,6 +102,7 @@ results@significant_modules
 - `perm.num` — number of permutations used to build the null distribution for significance testing (default 1000; higher values give more stable p-values at the cost of runtime).
 - `seed` — random seed for the permutation test, for reproducible results.
 - `fdr.thr` — FDR threshold for calling a pathway significant; pathways with FDR below this value are kept in `significant_modules` (default 0.05).
+- `min.matched.features.num` / `min.leading.edge.num` — post hoc filters applied to the final significant pathways: a pathway is reported only if it is matched by at least `min.matched.features.num` features and its leading edge contains at least `min.leading.edge.num` features (defaults: 15 / 2; set to 0 to disable). They do not affect the enrichment calculation, re-weighting, permutation test or FDR. Removed pathways are recorded in `results@process_info$post_hoc_filter$removed_modules`, and the two counts are reported as `n_matched_features` / `n_leading_edge_features` in `significant_modules`.
 - `max.iter.num` — featureMSEA re-weights feature-metabolite annotations based on significant pathways and re-runs enrichment iteratively; this caps the number of iterations (default 3).
 - `verbose` — print progress messages during the run.
 

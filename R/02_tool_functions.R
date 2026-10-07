@@ -55,6 +55,50 @@ get_significant_mfm <- function(res_list, fdr_threshold = 0.05) {
   return(significant_mfm)
 }
 
+#' Filter significant MFMs by feature numbers (post hoc)
+#'
+#' Counts the matched features and the leading-edge features of each
+#' significant MFM and keeps the MFMs that reach both minimums. Only used for
+#' reporting after the iterations; it does not change p-values or FDR.
+#'
+#' @param significant_mfm Data frame from get_significant_mfm.
+#' @param res_list Result list of the last iteration.
+#' @param min_matched Minimum number of matched features.
+#' @param min_leading_edge Minimum number of leading-edge features.
+#'
+#' @return A list with the kept MFMs (with columns n_matched_features and
+#'   n_leading_edge_features added) and the removed MFMs.
+#' @noRd
+filter_mfm_by_feature_number <- function(significant_mfm,
+                                         res_list,
+                                         min_matched = 15,
+                                         min_leading_edge = 2) {
+  count_features <- function(mid) {
+    steps <- res_list[[mid]]$steps
+    le <- res_list[[mid]]$leading_edge
+    c(
+      if (is.null(steps)) 0L else
+        length(unique(steps$variable_id_hit[steps$type == "pair_slot"])),
+      if (is.null(le)) 0L else length(unique(le$variable_id))
+    )
+  }
+
+  counts <- vapply(significant_mfm$MFM_id, count_features, integer(2))
+  significant_mfm <- significant_mfm %>%
+    mutate(
+      n_matched_features = unname(counts[1, ]),
+      n_leading_edge_features = unname(counts[2, ])
+    )
+
+  keep <- significant_mfm$n_matched_features >= min_matched &
+    significant_mfm$n_leading_edge_features >= min_leading_edge
+
+  list(
+    kept = significant_mfm[keep, , drop = FALSE],
+    removed = significant_mfm[!keep, , drop = FALSE]
+  )
+}
+
 #' Get feature metabolite long table
 #'
 #' @param significant_mfm Data frame from get_significant_mfm.

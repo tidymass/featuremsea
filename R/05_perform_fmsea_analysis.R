@@ -18,12 +18,24 @@
 #' @param perm.num Integer. Number of permutations for significance testing. Default is 1000.
 #' @param seed Integer. Random seed for reproducibility. Default is 123.
 #' @param fdr.thr Numeric. FDR threshold for selecting significant modules. Default is 0.05.
+#' @param min.matched.features.num Integer. Post hoc filter: minimum number of features
+#'   matched to a significant module for it to be reported. Default is 15. Set to 0 to disable.
+#' @param min.leading.edge.num Integer. Post hoc filter: minimum number of features in the
+#'   leading edge of a significant module for it to be reported. Default is 2. Set to 0 to disable.
 #' @param max.iter.num Integer. Maximum number of iterations for the algorithm. Default is 3.
 #' @param verbose Logical. Whether to print progress messages. Default is `TRUE`.
 #'
 #' @return A \code{featuremsea_object} containing the analysis results. 
 #'   The \code{significant_modules} slot will contain columns: 
-#'   \code{pathway_id}, \code{pathway_name}, \code{pathway_description}, etc.
+#'   \code{pathway_id}, \code{pathway_name}, \code{pathway_description}, etc.,
+#'   together with \code{n_matched_features} and \code{n_leading_edge_features}.
+#'
+#' @details The two post hoc filters (\code{min.matched.features.num} and
+#'   \code{min.leading.edge.num}) are applied only to the significant modules of the
+#'   final iteration, after the iterative analysis is complete. They do not affect the
+#'   enrichment calculation, the annotation re-weighting, the permutation test or the
+#'   FDR estimation. Modules removed by these filters are recorded in
+#'   \code{process_info$post_hoc_filter$removed_modules}.
 #'
 #' @author Xiaotao Shen \email{xiaotao.shen@@outlook.com}
 #' @author Yijiang Liu \email{ejoliu@@outlook.com}
@@ -41,9 +53,18 @@ perform_fmsea_analysis <- function(
     perm.num = 1000,            
     seed = 123,
     fdr.thr = 0.05,             
+    min.matched.features.num = 15,
+    min.leading.edge.num = 2,
     max.iter.num = 3,          
     verbose = TRUE
 ) {
+  
+  for (arg in c("min.matched.features.num", "min.leading.edge.num")) {
+    val <- get(arg)
+    if (!is.numeric(val) || length(val) != 1L || is.na(val) || val < 0) {
+      stop(sprintf("%s must be a single non-negative number.", arg))
+    }
+  }
   
   # --- Step 1: Database preparation ---
   if (!isS4(pathway_database) || !"database_info" %in% slotNames(pathway_database)) {
@@ -132,7 +153,29 @@ perform_fmsea_analysis <- function(
     score_annotation_table <- last_annotation_table_weighting
   }
   
-  # --- Step 4: Formatting and Output ---
+  # --- Step 4: Post hoc filtering by feature numbers ---
+  # Applied only to the final significant modules; the iterations above,
+  # including re-weighting and FDR, are not affected.
+  removed_mfm <- data.frame(MFM_id = character())
+  if (!is.null(last_significant_mfm) && nrow(last_significant_mfm) > 0) {
+    filtered <- filter_mfm_by_feature_number(
+      last_significant_mfm,
+      last_res_list,
+      min_matched = min.matched.features.num,
+      min_leading_edge = min.leading.edge.num
+    )
+    last_significant_mfm <- filtered$kept
+    removed_mfm <- filtered$removed
+    if (verbose && nrow(removed_mfm) > 0) {
+      message(sprintf(
+        "%d significant module(s) removed by the post hoc filters (matched features < %s or leading-edge features < %s): %s",
+        nrow(removed_mfm), min.matched.features.num, min.leading.edge.num,
+        paste(removed_mfm$MFM_id, collapse = ", ")
+      ))
+    }
+  }
+  
+  # --- Step 5: Formatting and Output ---
   if (is.null(last_feature_metabolite_count)) last_feature_metabolite_count <- data.frame() 
   if (is.null(last_annotation_table_weighting)) last_annotation_table_weighting <- data.frame()
   if (is.null(last_significant_mfm)) last_significant_mfm <- data.frame(MFM_id = character())
@@ -145,7 +188,7 @@ perform_fmsea_analysis <- function(
   significant_modules_final <- last_significant_mfm %>%
     dplyr::left_join(pathway_df[, pathway_cols], by = "MFM_id") %>%
     dplyr::rename(pathway_id = MFM_id, pathway_name = MFM_name, pathway_description = MFM_description) %>%
-    dplyr::select(dplyr::all_of(pathway_cols[pathway_cols != "MFM_id" & pathway_cols != "MFM_name" & pathway_cols != "MFM_description"]), ES, NES, p_value, FDR, pathway_id, pathway_name, pathway_description) %>%
+    dplyr::select(dplyr::all_of(pathway_cols[pathway_cols != "MFM_id" & pathway_cols != "MFM_name" & pathway_cols != "MFM_description"]), ES, NES, p_value, FDR, dplyr::any_of(c("n_matched_features", "n_leading_edge_features")), pathway_id, pathway_name, pathway_description) %>%
     dplyr::select(pathway_id, pathway_name, pathway_description, dplyr::everything())
   
   result_object <- new(
@@ -157,7 +200,14 @@ perform_fmsea_analysis <- function(
     res_list                   = last_res_list,
     converged                  = converged,
     iterations_used            = iter_used,
-    process_info               = list(creation_date = as.character(Sys.time()))
+    process_info               = list(
+      creation_date = as.character(Sys.time()),
+      post_hoc_filter = list(
+        min.matched.features.num = min.matched.features.num,
+        min.leading.edge.num = min.leading.edge.num,
+        removed_modules = removed_mfm
+      )
+    )
   )
   
   return(result_object)
